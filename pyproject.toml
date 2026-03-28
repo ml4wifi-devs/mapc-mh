@@ -1,0 +1,28 @@
+[project]
+name = "mapc-sa"
+version = "0.1.0"
+description = "Simulated Annealing for WiFi Network Configuration Optimization"
+
+readme = "README.md"
+license = {file = "LICENSE"}
+
+authors = [
+  {name = "Maksymilian Wojnar", email = "maksymilian.wojnar@agh.edu.pl"}
+]
+
+requires-python = ">=3.12"
+dependencies = [
+    "jax",
+    "numpy",
+    "optuna",
+    "joblib",
+    "mapc_optimal_research@git+https://github.com/ml4wifi-devs/mapc-optimal-research",
+    "tqdm",
+]
+
+[tool.setuptools.packages]
+find = {}
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
