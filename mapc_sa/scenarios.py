@@ -19,7 +19,7 @@ RESIDENTIAL_SCENARIOS = [
 
 # Random scenarios with varying AP counts used for hyperparameter tuning
 RANDOM_AP_COUNTS   = list(range(2, 17, 2))
-N_RANDOM_SCENARIOS = 20
+N_RANDOM_SCENARIOS = 2
 
 RANDOM_SCENARIOS = [
     random_scenario(
