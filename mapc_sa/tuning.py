@@ -5,8 +5,8 @@ For each trial, all random scenarios are run in parallel (joblib) for 2000 SA st
 The mean best data rate across scenarios is the objective (maximized).
 
 Usage:
-    python -m mapc_sa.tuning --version 1 --n_trials 100 --n_scenario_jobs 24 --seed 42
-    python -m mapc_sa.tuning --n_trials 50 --n_scenario_jobs 12  # runs all 4 versions
+    python -m mapc_sa.tuning --version 1 --n_trials 100 --n_jobs 24 --seed 42
+    python -m mapc_sa.tuning --n_trials 50 --n_jobs 12  # runs all 4 versions
 """
 from __future__ import annotations
 
@@ -19,10 +19,6 @@ from argparse import ArgumentParser
 
 import numpy as np
 import optuna
-from joblib import Parallel, delayed
-
-
-optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def _run_scenario_trial(scenario_idx: int, version: int, seed: int, n_steps: int, top_n: int, params: dict) -> tuple[float, float]:
@@ -45,7 +41,7 @@ def _run_scenario_trial(scenario_idx: int, version: int, seed: int, n_steps: int
     return result.best_rate, result.T_0
 
 
-def make_objective(version: int, seed: int, n_steps: int, top_n: int, n_scenario_jobs: int):
+def make_objective(version: int, seed: int, n_steps: int, top_n: int):
     """Build an Optuna objective function for the given SA version."""
 
     def objective(trial: optuna.Trial) -> float:
@@ -61,12 +57,9 @@ def make_objective(version: int, seed: int, n_steps: int, top_n: int, n_scenario
 
         from mapc_sa.scenarios import RANDOM_SCENARIOS
         n_scenarios = len(RANDOM_SCENARIOS)
-        n_jobs = min(n_scenario_jobs, n_scenarios)
 
-        results = Parallel(n_jobs=n_jobs, backend='loky', verbose=0)(
-            delayed(_run_scenario_trial)(i, version, seed, n_steps, top_n, params)
-            for i in range(n_scenarios)
-        )
+        results = [_run_scenario_trial(i, version, seed, n_steps, top_n, params) 
+                   for i in range(n_scenarios)]
 
         rates, t0_values = zip(*results)
         trial.set_user_attr('T_0', float(np.mean(t0_values)))
@@ -94,18 +87,17 @@ def _tune_version(version: int, args) -> None:
         seed=args.seed,
         n_steps=args.n_steps,
         top_n=args.top_n,
-        n_scenario_jobs=args.n_scenario_jobs,
     )
 
     print(f'Tuning SA v{version} | {args.n_trials} trials | '
-          f'{args.n_scenario_jobs} scenario jobs | {args.n_steps} steps/scenario')
+          f'{args.n_jobs} scenario jobs | {args.n_steps} steps/scenario')
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         study.optimize(
             objective,
             n_trials=args.n_trials,
-            n_jobs=args.n_optuna_jobs,
+            n_jobs=args.n_jobs,
             show_progress_bar=True,
         )
 
@@ -135,11 +127,8 @@ def main():
     parser.add_argument('--version', type=int, default=None, choices=[1, 2, 3, 4],
                         help='SA version to tune (default: all 4 sequentially)')
     parser.add_argument('--n_trials', type=int, default=100)
-    parser.add_argument('--n_scenario_jobs', type=int, default=24,
-                        help='Parallel workers per trial (default: 24)')
-    parser.add_argument('--n_optuna_jobs', type=int, default=1,
-                        help='Parallel Optuna trials (default: 1); '
-                             'n_scenario_jobs × n_optuna_jobs should not exceed 24')
+    parser.add_argument('--n_jobs', type=int, default=8,
+                        help='Parallel workers (default: 8)')
     parser.add_argument('--n_steps', type=int, default=2000)
     parser.add_argument('--top_n',   type=int, default=10)
     parser.add_argument('--seed',    type=int, default=42)

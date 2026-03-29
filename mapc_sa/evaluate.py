@@ -1,13 +1,9 @@
 """
 Final evaluation of SA on residential scenarios using best hyperparameters.
 
-Supports running multiple seeds in parallel (--n_runs) using joblib.
-
 Usage:
     python -m mapc_sa.evaluate --version 1 --params results/best_params_v1.json
     python -m mapc_sa.evaluate --params results/best_params_v{}.json  # all 4 versions
-    python -m mapc_sa.evaluate --version 1 --params results/best_params_v1.json \\
-        --n_steps 2000 --top_n 10 --n_runs 4 --n_jobs 4 --output results/eval_v1.json
 """
 from __future__ import annotations
 
@@ -18,12 +14,9 @@ import os
 import time
 from argparse import ArgumentParser
 
-from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from mapc_sa.config import config_to_serializable
 from mapc_sa.scenarios import RESIDENTIAL_SCENARIOS
-from mapc_sa.versions import VERSION_RUNNERS
 
 
 def _run_single(scenario_idx: int, split_idx: int, version: int,
@@ -66,9 +59,7 @@ def run_evaluation(
     top_n:   int,
     seed:    int,
     n_runs:  int = 1,
-    n_jobs:  int = 1,
 ) -> list[dict]:
-    """Run SA on all residential scenarios, n_runs replicates each, n_jobs in parallel."""
     all_results = []
 
     for scenario_idx, scenario in enumerate(tqdm(RESIDENTIAL_SCENARIOS, desc='Scenarios')):
@@ -76,18 +67,8 @@ def run_evaluation(
         scenario_results = []
 
         for split_idx in range(len(splits)):
-            seeds      = [seed + run_i for run_i in range(n_runs)]
-            n_jobs_eff = min(n_jobs, n_runs)
-
-            if n_runs == 1 or n_jobs_eff == 1:
-                runs = [_run_single(scenario_idx, split_idx, version, params,
-                                    n_steps, top_n, s) for s in seeds]
-            else:
-                runs = Parallel(n_jobs=n_jobs_eff, backend='loky')(
-                    delayed(_run_single)(scenario_idx, split_idx, version, params,
-                                        n_steps, top_n, s)
-                    for s in seeds
-                )
+            runs = [_run_single(scenario_idx, split_idx, version, params,
+                    n_steps, top_n, seed + run_i) for run_i in range(n_runs)]
 
             scenario_results.append({'split_idx': split_idx, 'runs': list(runs)})
 
@@ -109,8 +90,7 @@ def _evaluate_version(version: int, args) -> None:
     sa_params     = {k: v for k, v in best_params.items() if k in sa_param_keys}
 
     print(f'SA v{version} | params: {sa_params}')
-    print(f'n_steps={args.n_steps}, top_n={args.top_n}, n_runs={args.n_runs}, '
-          f'n_jobs={args.n_jobs}, seed={args.seed}')
+    print(f'n_steps={args.n_steps}, top_n={args.top_n}, n_runs={args.n_runs}, seed={args.seed}')
 
     t0      = time.perf_counter()
     results = run_evaluation(
@@ -120,7 +100,6 @@ def _evaluate_version(version: int, args) -> None:
         top_n   = args.top_n,
         seed    = args.seed,
         n_runs  = args.n_runs,
-        n_jobs  = args.n_jobs,
     )
     elapsed = time.perf_counter() - t0
 
@@ -162,12 +141,8 @@ def main():
     parser.add_argument('--top_n',   type=int, default=10)
     parser.add_argument('--n_runs',  type=int, default=1,
                         help='Independent replicates per scenario (default: 1)')
-    parser.add_argument('--n_jobs',  type=int, default=1,
-                        help='Parallel workers for replicates (default: 1, max 24)')
     parser.add_argument('--seed',    type=int, default=42)
     args = parser.parse_args()
-
-    args.n_jobs = min(args.n_jobs, 24)
 
     versions = [args.version] if args.version is not None else [1, 2, 3, 4]
     for version in versions:

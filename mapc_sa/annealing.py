@@ -103,12 +103,17 @@ def calibrate_T0(
     current_rate    = float(scenario(sim_key, tx, tx_p, mcs, return_internals=True)[0])
 
     deltas: list[float] = []
+    
+    @jax.jit
+    def _calibrate_step(key, current):
+        key, nbr_key, sim_key = jax.random.split(key, 3)
+        candidate         = neighbor_fn(current, nbr_key, T_large, T_large, valid_mask_jax)
+        tx, tx_p, mcs     = to_arrays(candidate)
+        candidate_rate, _ = scenario(sim_key, tx, tx_p, mcs)
+        return key, candidate, candidate_rate
 
     for _ in range(n_steps):
-        key, nbr_key, sim_key = jax.random.split(key, 3)
-        candidate      = neighbor_fn(current, nbr_key, T_large, T_large, valid_mask_jax)
-        tx, tx_p, mcs  = to_arrays(candidate)
-        candidate_rate = float(scenario(sim_key, tx, tx_p, mcs, return_internals=True)[0])
+        key, candidate, candidate_rate = _calibrate_step(key, current)
         deltas.append(candidate_rate - current_rate)
         current      = candidate
         current_rate = candidate_rate
