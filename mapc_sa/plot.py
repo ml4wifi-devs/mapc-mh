@@ -64,6 +64,8 @@ def compute_stats(
 def save_csv(
     path:     str,
     datasets: list[tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+    h_mab=None,
+    dcf=None,
 ) -> None:
     """Save (label, steps, mean, lo95, hi95) datasets to a single CSV."""
     os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
@@ -73,6 +75,10 @@ def save_csv(
     for label, *_ in datasets:
         safe = label.replace(' ', '_')
         header += [f'{safe}_mean', f'{safe}_lo95', f'{safe}_hi95']
+    if h_mab is not None:
+        header += ['H_MAB_mean', 'H_MAB_lo95', 'H_MAB_hi95']
+    if dcf is not None:
+        header += ['DCF_mean', 'DCF_lo95', 'DCF_hi95']
 
     with open(path, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -81,6 +87,11 @@ def save_csv(
             row = [i]
             for _, steps, mean, lo, hi in datasets:
                 row += [mean[i], lo[i], hi[i]]
+            if h_mab is not None:
+                _, h_mean, h_lo, h_hi = h_mab
+                row += [h_mean[i], h_lo[i], h_hi[i]]
+            if dcf is not None:
+                row += list(dcf)
             writer.writerow(row)
 
     print(f'Saved CSV to {path}')
@@ -96,12 +107,29 @@ PLOT_PARAMS = {
     'lines.linewidth': 1.2,
 }
 
-COLORS = ['#e31a1c', '#1f78b4', '#33a02c', '#ff7f00', '#6a3d9a']
+COLORS = ['#e31a1c', '#1f78b4', '#ff7f00', '#a65628', '#984ea3']
+
+H_MAB_COLOR = '#33a02c'
+DCF_COLOR   = '#6a3d9a'
+
+
+def load_h_mab_csv(path: str):
+    """Load h_mab.csv → (steps, mean, lo95, hi95)."""
+    data = np.loadtxt(path, delimiter=',', skiprows=1)
+    return data[:, 0], data[:, 1], data[:, 2], data[:, 3]
+
+
+def load_dcf_csv(path: str):
+    """Load dcf.csv → (mean, lo95, hi95)."""
+    data = np.loadtxt(path, delimiter=',', skiprows=1)
+    return float(data[0]), float(data[1]), float(data[2])
 
 
 def plot_results(
     output_stem: str,
     datasets: list[tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+    h_mab=None,
+    dcf=None,
 ) -> None:
     """Plot throughput vs step with mean ± 95% CI bands."""
     plt.rcParams.update(PLOT_PARAMS)
@@ -110,6 +138,16 @@ def plot_results(
     for (label, steps, mean, lo, hi), color in zip(datasets, COLORS):
         ax.plot(steps, mean, color=color, label=label)
         ax.fill_between(steps, lo, hi, color=color, alpha=0.20)
+
+    if h_mab is not None:
+        h_steps, h_mean, h_lo, h_hi = h_mab
+        ax.plot(h_steps, h_mean, color=H_MAB_COLOR, label='H-MAB')
+        ax.fill_between(h_steps, h_lo, h_hi, color=H_MAB_COLOR, alpha=0.20)
+
+    if dcf is not None:
+        dcf_mean, dcf_lo, dcf_hi = dcf
+        ax.axhline(dcf_mean, color=DCF_COLOR, linestyle='--', label='DCF')
+        ax.axhspan(dcf_lo, dcf_hi, color=DCF_COLOR, alpha=0.10)
 
     ax.set_xlabel('Step')
     ax.set_ylabel('Throughput [Mb/s]')
@@ -137,6 +175,10 @@ def main():
                              'Default: same dir as first input, same stem.')
     parser.add_argument('--window', type=int, default=50,
                         help='Moving average window size (default: 50)')
+    parser.add_argument('--h_mab', type=str, default=None,
+                        help='Path to H-MAB CSV from baselines.py')
+    parser.add_argument('--dcf',   type=str, default=None,
+                        help='Path to DCF CSV from baselines.py')
     args = parser.parse_args()
 
     labels = args.labels or [os.path.splitext(os.path.basename(p))[0] for p in args.input]
@@ -156,8 +198,22 @@ def main():
         steps, mean, lo, hi = compute_stats(histories, window=args.window)
         datasets.append((label, steps, mean, lo, hi))
 
-    plot_results(output_stem, datasets)
-    save_csv(output_stem + '.csv', datasets)
+    h_mab_data = None
+    if args.h_mab:
+        h_steps, h_mean, h_lo, h_hi = load_h_mab_csv(args.h_mab)
+        h_mean = moving_average(h_mean, args.window)
+        h_lo   = moving_average(h_lo,   args.window)
+        h_hi   = moving_average(h_hi,   args.window)
+        h_mab_data = (h_steps, h_mean, h_lo, h_hi)
+        print(f'H-MAB: {len(h_steps)} steps from {args.h_mab}')
+
+    dcf_data = None
+    if args.dcf:
+        dcf_data = load_dcf_csv(args.dcf)
+        print(f'DCF: mean={dcf_data[0]:.2f} [{dcf_data[1]:.2f}, {dcf_data[2]:.2f}] Mb/s')
+
+    plot_results(output_stem, datasets, h_mab=h_mab_data, dcf=dcf_data)
+    save_csv(output_stem + '.csv', datasets, h_mab=h_mab_data, dcf=dcf_data)
 
 
 if __name__ == '__main__':
