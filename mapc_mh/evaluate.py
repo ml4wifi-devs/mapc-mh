@@ -1,15 +1,15 @@
 """Evaluate all methods on all scenarios and save per-run histories.
 
 Usage:
-    python -m mapc_sa.evaluate
-    python -m mapc_sa.evaluate --n_seeds 5 \\
-                               --params_sa   mapc_sa/methods/configs/best_params_sa.json \\
-                               --params_rrhc mapc_sa/methods/configs/best_params_rrhc.json \\
-                               --params_tabu mapc_sa/methods/configs/best_params_tabu.json
+    python -m mapc_mh.evaluate
+    python -m mapc_mh.evaluate --n_seeds 5 \\
+                               --params_sa   mapc_mh/methods/configs/best_params_sa.json \\
+                               --params_rrhc mapc_mh/methods/configs/best_params_rrhc.json \\
+                               --params_tabu mapc_mh/methods/configs/best_params_tabu.json
 """
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 import json
 import os
@@ -18,8 +18,8 @@ from argparse import ArgumentParser
 
 from tqdm import tqdm
 
-from mapc_sa.methods import METHODS, METHOD_LABELS
-from mapc_sa.scenarios import build_scenarios, N_SEEDS
+from mapc_mh.methods import METHODS, METHOD_LABELS
+from mapc_mh.scenarios import build_scenarios, N_SEEDS
 
 
 def _load_hparams(path: str | None) -> dict:
@@ -32,9 +32,9 @@ def _load_hparams(path: str | None) -> dict:
 
 def main():
     parser = ArgumentParser(description='Evaluate all methods on all scenarios')
-    parser.add_argument('--params_sa',   type=str, default='mapc_sa/methods/configs/best_params_sa.json')
-    parser.add_argument('--params_rrhc', type=str, default='mapc_sa/methods/configs/best_params_rrhc.json')
-    parser.add_argument('--params_tabu', type=str, default='mapc_sa/methods/configs/best_params_tabu.json')
+    parser.add_argument('--params_sa',   type=str, default='mapc_mh/methods/configs/best_params_sa.json')
+    parser.add_argument('--params_rrhc', type=str, default='mapc_mh/methods/configs/best_params_rrhc.json')
+    parser.add_argument('--params_tabu', type=str, default='mapc_mh/methods/configs/best_params_tabu.json')
     parser.add_argument('--output',  type=str, default='results/evaluation.json')
     parser.add_argument('--n_steps', type=int, default=2000)
     parser.add_argument('--n_seeds', type=int, default=N_SEEDS)

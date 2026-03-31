@@ -4,9 +4,9 @@ Accepts any number of JSON files produced by evaluate.py or baselines.py
 and prints a comparison table plus pairwise Mann-Whitney U significance tests.
 
 Usage:
-    python -m mapc_sa.report --input results/evaluation.json
-    python -m mapc_sa.report --input results/evaluation.json results/baselines.json
-    python -m mapc_sa.report --input results/evaluation.json results/baselines.json --alpha 0.01
+    python -m mapc_mh.report --input results/evaluation.json
+    python -m mapc_mh.report --input results/evaluation.json results/baselines.json
+    python -m mapc_mh.report --input results/evaluation.json results/baselines.json --alpha 0.01
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from argparse import ArgumentParser
 import numpy as np
 from scipy import stats
 
-from mapc_sa.methods import ALL_LABELS
-from mapc_sa.scenarios import SCENARIO_CONFIGS
+from mapc_mh.methods import ALL_LABELS
+from mapc_mh.scenarios import SCENARIO_CONFIGS
 
 
 def _group_rates(data: dict) -> dict[str, dict[str, list[float]]]:

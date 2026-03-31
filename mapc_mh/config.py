@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401 — must be first
+import mapc_mh.env  # noqa: F401 — must be first
 
 from collections.abc import Callable
 from dataclasses import dataclass

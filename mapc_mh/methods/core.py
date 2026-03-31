@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +8,7 @@ import numpy as np
 
 from dataclasses import dataclass
 
-from mapc_sa.config import (
+from mapc_mh.config import (
     NetworkConfig, ScenarioInfo,
     make_config_to_arrays, make_random_config, make_scenario_info,
 )

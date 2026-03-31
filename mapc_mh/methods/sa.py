@@ -1,7 +1,7 @@
 """Simulated Annealing (SA)."""
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 from typing import NamedTuple
 
@@ -9,9 +9,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from mapc_sa.config import NetworkConfig, ScenarioInfo, make_config_to_arrays, make_random_config
-from mapc_sa.methods.core import _build_result, _setup, _update_top_n, neighbor
-from mapc_sa.methods.core import Result
+from mapc_mh.config import NetworkConfig, ScenarioInfo, make_config_to_arrays, make_random_config
+from mapc_mh.methods.core import _build_result, _setup, _update_top_n, neighbor
+from mapc_mh.methods.core import Result
 
 
 class _SAState(NamedTuple):

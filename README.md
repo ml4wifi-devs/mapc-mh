@@ -14,8 +14,8 @@ We propose using **trajectory-based metaheuristics** — Simulated Annealing (SA
 Requires Python >= 3.12. We recommend using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-git clone https://github.com/ml4wifi-devs/mapc-sa.git
-cd mapc-sa
+git clone https://github.com/ml4wifi-devs/mapc-mh.git
+cd mapc-mh
 uv venv
 source .venv/bin/activate
 uv sync
@@ -28,28 +28,28 @@ uv sync
 Tune hyperparameters for a single method using Optuna (TPE sampler):
 
 ```bash
-python -m mapc_sa.tune --method sa   --n_trials 100
-python -m mapc_sa.tune --method rrhc --n_trials 50
-python -m mapc_sa.tune --method tabu --n_trials 100
+python -m mapc_mh.tune --method sa   --n_trials 100
+python -m mapc_mh.tune --method rrhc --n_trials 50
+python -m mapc_mh.tune --method tabu --n_trials 100
 ```
 
-By default tunes over 1 scenario seed per config (9 scenarios total) and saves results to `mapc_sa/methods/configs/best_params_{method}.json`.
+By default tunes over 1 scenario seed per config (9 scenarios total) and saves results to `mapc_mh/methods/configs/best_params_{method}.json`.
 
 ### Evaluation
 
 Evaluate all methods on all scenarios using tuned (or default) hyperparameters:
 
 ```bash
-python -m mapc_sa.evaluate
+python -m mapc_mh.evaluate
 ```
 
 With custom configs:
 
 ```bash
-python -m mapc_sa.evaluate \
-    --params_sa   mapc_sa/methods/configs/best_params_sa.json \
-    --params_rrhc mapc_sa/methods/configs/best_params_rrhc.json \
-    --params_tabu mapc_sa/methods/configs/best_params_tabu.json
+python -m mapc_mh.evaluate \
+    --params_sa   mapc_mh/methods/configs/best_params_sa.json \
+    --params_rrhc mapc_mh/methods/configs/best_params_rrhc.json \
+    --params_tabu mapc_mh/methods/configs/best_params_tabu.json
 ```
 
 Results are saved to `results/evaluation.json`.
@@ -59,8 +59,8 @@ Results are saved to `results/evaluation.json`.
 Run H-MAB, DCF, and T-Optimal (SUM) baselines:
 
 ```bash
-python -m mapc_sa.baselines
-python -m mapc_sa.baselines --agents t_optimal
+python -m mapc_mh.baselines
+python -m mapc_mh.baselines --agents t_optimal
 ```
 
 Results are saved to `results/baselines.json`.
@@ -70,8 +70,8 @@ Results are saved to `results/baselines.json`.
 Print a comparison table (mean ± std) and pairwise Mann-Whitney U significance tests from saved results:
 
 ```bash
-python -m mapc_sa.report --input results/evaluation.json
-python -m mapc_sa.report --input results/evaluation.json results/baselines.json
+python -m mapc_mh.report --input results/evaluation.json
+python -m mapc_mh.report --input results/evaluation.json results/baselines.json
 ```
 
 ### Plotting
@@ -79,7 +79,7 @@ python -m mapc_sa.report --input results/evaluation.json results/baselines.json
 Plot convergence curves (best throughput vs. step) with mean ± 95% CI:
 
 ```bash
-python -m mapc_sa.plot --input results/evaluation.json
+python -m mapc_mh.plot --input results/evaluation.json
 ```
 
 Produces a PDF, PNG, and CSV compatible with TikZ/pgfplots.
@@ -87,7 +87,7 @@ Produces a PDF, PNG, and CSV compatible with TikZ/pgfplots.
 ## Project Structure
 
 ```
-mapc_sa/
+mapc_mh/
 ├── env.py           # JAX CPU environment setup (imported first by all modules)
 ├── config.py        # NetworkConfig, ScenarioInfo, array conversion helpers
 ├── scenarios.py     # Scenario definitions and build_scenarios(n_seeds)

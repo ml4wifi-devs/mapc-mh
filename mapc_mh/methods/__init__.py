@@ -1,9 +1,9 @@
 from collections.abc import Callable
 
-from mapc_sa.methods.sa   import run as run_sa
-from mapc_sa.methods.rrhc import run as run_rrhc
-from mapc_sa.methods.tabu import run as run_tabu
-from mapc_sa.methods.core import Result
+from mapc_mh.methods.sa   import run as run_sa
+from mapc_mh.methods.rrhc import run as run_rrhc
+from mapc_mh.methods.tabu import run as run_tabu
+from mapc_mh.methods.core import Result
 
 METHODS: dict[str, Callable[..., Result]] = {
     'sa':   run_sa,

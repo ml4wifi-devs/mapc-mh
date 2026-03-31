@@ -5,14 +5,14 @@ Search methods: mean ± 95% CI of best_history over seeds.
 Baselines: horizontal line at mean best_rate over seeds.
 
 Usage:
-    python -m mapc_sa.plot --input results/evaluation.json
-    python -m mapc_sa.plot --input results/evaluation.json results/baselines.json
-    python -m mapc_sa.plot --input results/evaluation.json results/baselines.json \\
+    python -m mapc_mh.plot --input results/evaluation.json
+    python -m mapc_mh.plot --input results/evaluation.json results/baselines.json
+    python -m mapc_mh.plot --input results/evaluation.json results/baselines.json \\
                            --output results/plots/convergence
 """
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 import csv
 import json
@@ -24,8 +24,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mapc_sa.methods import ALL_LABELS
-from mapc_sa.scenarios import SCENARIO_CONFIGS
+from mapc_mh.methods import ALL_LABELS
+from mapc_mh.scenarios import SCENARIO_CONFIGS
 
 
 COLORS      = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink']

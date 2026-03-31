@@ -1,12 +1,12 @@
 """Run H-MAB and DCF baselines on all scenarios and save best_rate per scenario.
 
 Usage:
-    python -m mapc_sa.baselines
-    python -m mapc_sa.baselines --agents h_mab dcf --n_seeds 5
+    python -m mapc_mh.baselines
+    python -m mapc_mh.baselines --agents h_mab dcf --n_seeds 5
 """
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 import json
 import os
@@ -28,7 +28,7 @@ from mapc_optimal import OptimizationType, Solver, positions_to_path_loss
 from reinforced_lib.agents.mab import UCB
 from tqdm import tqdm
 
-from mapc_sa.scenarios import build_scenarios, N_SEEDS
+from mapc_mh.scenarios import build_scenarios, N_SEEDS
 
 
 def _to_python_dict(d):

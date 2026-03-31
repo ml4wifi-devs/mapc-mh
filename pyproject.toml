@@ -1,7 +1,7 @@
 [project]
-name = "mapc-sa"
+name = "mapc-mh"
 version = "0.1.0"
-description = "Simulated Annealing for WiFi Network Configuration Optimization"
+description = "Trajectory-Based Metaheuristics for WiFi Multi-AP Coordination"
 
 readme = "README.md"
 license = {file = "LICENSE"}

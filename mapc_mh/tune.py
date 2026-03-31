@@ -1,13 +1,13 @@
 """Hyperparameter tuning for SA, RRHC, and Tabu using Optuna (TPE sampler).
 
 Usage:
-    python -m mapc_sa.tune --method sa   --n_trials 100
-    python -m mapc_sa.tune --method rrhc --n_trials 50
-    python -m mapc_sa.tune --method tabu --n_trials 100
+    python -m mapc_mh.tune --method sa   --n_trials 100
+    python -m mapc_mh.tune --method rrhc --n_trials 50
+    python -m mapc_mh.tune --method tabu --n_trials 100
 """
 from __future__ import annotations
 
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 import json
 import os
@@ -17,8 +17,8 @@ from argparse import ArgumentParser
 import numpy as np
 import optuna
 
-from mapc_sa.methods import METHODS
-from mapc_sa.scenarios import build_scenarios
+from mapc_mh.methods import METHODS
+from mapc_mh.scenarios import build_scenarios
 
 
 def _search_space(method: str, trial: optuna.Trial) -> dict:
@@ -58,12 +58,12 @@ def main():
     parser.add_argument('--top_n',    type=int, default=10)
     parser.add_argument('--seed',     type=int, default=42)
     parser.add_argument('--output',   type=str, default=None,
-                        help='Output path (default: mapc_sa/methods/configs/best_params_{method}.json)')
+                        help='Output path (default: mapc_mh/methods/configs/best_params_{method}.json)')
     parser.add_argument('--storage',  type=str, default=None,
                         help='Optuna storage URL (e.g. sqlite:///tune.db)')
     args = parser.parse_args()
 
-    output    = args.output or f'mapc_sa/methods/configs/best_params_{args.method}.json'
+    output    = args.output or f'mapc_mh/methods/configs/best_params_{args.method}.json'
     scenarios = build_scenarios(args.n_seeds)
     os.makedirs(os.path.dirname(output) if os.path.dirname(output) else '.', exist_ok=True)
 

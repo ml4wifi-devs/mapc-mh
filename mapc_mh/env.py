@@ -1,6 +1,6 @@
 """
 CPU-only JAX environment setup. Must be imported before any JAX import.
-All mapc_sa modules import this first.
+All mapc_mh modules import this first.
 """
 import os
 

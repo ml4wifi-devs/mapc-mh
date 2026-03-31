@@ -1,4 +1,4 @@
-import mapc_sa.env  # noqa: F401
+import mapc_mh.env  # noqa: F401
 
 from mapc_research.envs.scenario_impl import residential_scenario
 
