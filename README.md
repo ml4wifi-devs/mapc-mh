@@ -1,24 +1,13 @@
-# Simulated Annealing for Multi-AP Coordination
+# Search-Based Multi-AP Coordination
 
-We propose using **simulated annealing (SA)** to optimize coordinated spatial reuse (Co-SR) scheduling in IEEE 802.11bn (Wi-Fi 8) networks. Starting from a random configuration, SA iteratively proposes and accepts/rejects neighboring configurations guided by a temperature schedule — converging to high-throughput solutions without a surrogate model or offline training.
+We propose using **combinatorial search methods** — Simulated Annealing (SA), Random Restart Hill Climbing (RRHC), and Tabu Search — to optimize coordinated spatial reuse (Co-SR) scheduling in IEEE 802.11bn (Wi-Fi 8) networks. Starting from a random configuration, each method iteratively proposes and evaluates neighboring configurations, converging to high-throughput solutions without a surrogate model or offline training.
 
 ## How It Works
 
 1. **Initialization** — Sample a random Co-SR configuration (active APs, STA selection, MCS, transmit power) and evaluate its throughput directly in the simulator
 2. **Neighbor proposal** — Perturb the current configuration by mutating one parameter of one AP
-3. **Metropolis acceptance** — Accept improvements always; accept degradations with probability exp(Δ/T), where T decays over time
+3. **Acceptance** — Each method applies its own acceptance criterion (Metropolis for SA, strict improvement for RRHC, tabu list for Tabu Search)
 4. **Top-N tracking** — Maintain the best *N* configurations seen across all steps for round-robin deployment
-
-## SA Versions
-
-| Version | Selection mutation | MCS / tx_power mutation |
-|---------|-------------------|------------------------|
-| **V1** — Pure SA | Toggle AP on/off, random STA | Uniform random draw |
-| **V2** — Ordinal-aware | Toggle AP on/off, random STA | ±1 step only |
-| **V3** — Temperature-dependent jumps | Toggle AP on/off, random STA | ±*k* steps, *k* shrinks with temperature |
-| **V4** — Concurrency control | Add/remove AP via sigmoid(target − n_active) | ±*k* steps, *k* shrinks with temperature |
-
-All versions are implemented as **pure JAX functions** and compiled end-to-end with `jax.lax.scan`, enabling fast execution on CPU.
 
 ## Installation
 
@@ -36,69 +25,90 @@ uv sync
 
 ### Hyperparameter Tuning
 
-Tune SA hyperparameters using Optuna (TPE sampler) over 160 randomly generated scenarios:
+Tune hyperparameters for a single method using Optuna (TPE sampler):
 
 ```bash
-python -m mapc_sa.tuning --version 4 --n_trials 100 --n_scenario_jobs 24
+python -m mapc_sa.tune --method sa   --n_trials 100
+python -m mapc_sa.tune --method rrhc --n_trials 50
+python -m mapc_sa.tune --method tabu --n_trials 100
 ```
 
-Run all 4 versions sequentially:
-
-```bash
-python -m mapc_sa.tuning --n_trials 100 --n_scenario_jobs 24
-```
-
-Results are saved to `results/best_params_v{1,2,3,4}.json`.
+By default tunes over 1 scenario seed per config (9 scenarios total) and saves results to `mapc_sa/methods/configs/best_params_{method}.json`.
 
 ### Evaluation
 
-Evaluate a specific version on the residential scenario using tuned hyperparameters:
+Evaluate all methods on all scenarios using tuned (or default) hyperparameters:
 
 ```bash
-python -m mapc_sa.evaluate --version 4 --params results/best_params_v4.json \
-    --n_steps 10000 --n_runs 8 --n_jobs 8
+python -m mapc_sa.evaluate
 ```
 
-Evaluate all 4 versions at once (use `{}` as the version placeholder):
+With custom configs:
 
 ```bash
-python -m mapc_sa.evaluate --params results/best_params_v{}.json \
-    --n_steps 10000 --n_runs 8 --n_jobs 8
+python -m mapc_sa.evaluate \
+    --params_sa   mapc_sa/methods/configs/best_params_sa.json \
+    --params_rrhc mapc_sa/methods/configs/best_params_rrhc.json \
+    --params_tabu mapc_sa/methods/configs/best_params_tabu.json
 ```
 
-Results are saved to `results/eval_v{1,2,3,4}.json`.
+Results are saved to `results/evaluation.json`.
+
+### Baselines
+
+Run H-MAB, DCF, and T-Optimal (SUM) baselines:
+
+```bash
+python -m mapc_sa.baselines
+python -m mapc_sa.baselines --agents t_optimal
+```
+
+Results are saved to `results/baselines.json`.
+
+### Statistical Report
+
+Print a comparison table (mean ± std) and pairwise Mann-Whitney U significance tests from saved results:
+
+```bash
+python -m mapc_sa.report --input results/evaluation.json
+python -m mapc_sa.report --input results/evaluation.json results/baselines.json
+```
 
 ### Plotting
 
-Plot throughput vs. step with mean ± 95% CI across runs:
+Plot convergence curves (best throughput vs. step) with mean ± 95% CI:
 
 ```bash
-python -m mapc_sa.plot --input results/eval_v1.json results/eval_v4.json \
-    --labels V1 V4 --output results/plots/compare
+python -m mapc_sa.plot --input results/evaluation.json
 ```
 
-Produces a PDF, PNG, and a CSV compatible with TikZ/pgfplots.
+Produces a PDF, PNG, and CSV compatible with TikZ/pgfplots.
 
 ## Project Structure
 
 ```
 mapc_sa/
-├── _env.py          # JAX CPU environment setup (imported first by all modules)
-├── config.py        # NetworkConfig (JAX NamedTuple), ScenarioInfo, array conversion
-├── neighbor.py      # Neighbor functions for V1–V4 (pure JAX, JIT-compatible)
-├── annealing.py     # JIT-compiled SA loop (jax.lax.scan), T₀ calibration, top-N buffer
-├── versions.py      # Version runners: run_sa_v1 … run_sa_v4
-├── scenarios.py     # Residential and random scenario definitions
-├── tuning.py        # Optuna hyperparameter search (CLI entry point)
-├── evaluate.py      # Final evaluation on residential scenario (CLI entry point)
-└── plot.py          # Throughput-vs-step plots with CI bands and CSV export
+├── env.py           # JAX CPU environment setup (imported first by all modules)
+├── config.py        # NetworkConfig, ScenarioInfo, array conversion helpers
+├── scenarios.py     # Scenario definitions and build_scenarios(n_seeds)
+├── evaluate.py      # Run all methods on all scenarios, save histories
+├── baselines.py     # H-MAB, DCF, and T-Optimal baselines
+├── report.py        # Statistical comparison from saved results
+├── plot.py          # Convergence plots with CI bands and CSV export
+├── tune.py          # Optuna hyperparameter search
+└── methods/
+    ├── core.py      # Shared logic: neighbor generation, top-N buffer, Result
+    ├── sa.py        # Simulated Annealing
+    ├── rrhc.py      # Random Restart Hill Climbing
+    ├── tabu.py      # Tabu Search
+    └── configs/     # Default hyperparameter configs (tracked by git)
 ```
 
 ## Citation
 
 ```bibtex
 @article{wojnar2026sa,
-  title={Simulated Annealing for Multi-AP Coordination},
+  title={Search-Based Multi-AP Coordination},
   author={Wojnar, Maksymilian},
   year={2026}
 }
