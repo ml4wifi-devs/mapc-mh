@@ -18,7 +18,7 @@ dependencies = [
     "optuna~=4.5.0",
     "scipy~=1.17.1",
     "tqdm~=4.67.3",
-    "mapc_research@git+https://github.com/ml4wifi-devs/mapc-optimal-research",
+    "mapc-optimal-research@git+https://github.com/ml4wifi-devs/mapc-optimal-research",
 ]
 
 [tool.setuptools.packages]
