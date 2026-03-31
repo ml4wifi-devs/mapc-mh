@@ -1,8 +1,14 @@
-"""Plot convergence curves (best_history) from evaluate.py JSON files.
+"""Plot convergence curves per scenario config from evaluate.py / baselines.py results.
+
+One subplot per scenario config (3×3 grid), one curve per method.
+Search methods: mean ± 95% CI of best_history over seeds.
+Baselines: horizontal line at mean best_rate over seeds.
 
 Usage:
-    python -m mapc_sa.plot --input results/eval_sa.json results/eval_rrhc.json results/eval_tabu.json
-    python -m mapc_sa.plot --input results/eval_*.json --output results/plots/convergence
+    python -m mapc_sa.plot --input results/evaluation.json
+    python -m mapc_sa.plot --input results/evaluation.json results/baselines.json
+    python -m mapc_sa.plot --input results/evaluation.json results/baselines.json \\
+                           --output results/plots/convergence
 """
 from __future__ import annotations
 
@@ -18,9 +24,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from mapc_sa.methods import ALL_LABELS
+from mapc_sa.scenarios import SCENARIO_CONFIGS
 
-COLORS      = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
-LINE_STYLES = ['-', '--', '-.']
+
+COLORS      = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink']
+LINE_STYLES = ['-', '--', '-.', ':']
 
 
 def _moving_average(x: np.ndarray, window: int) -> np.ndarray:
@@ -38,26 +47,76 @@ def _compute_stats(histories: list[list[float]], window: int):
     return np.arange(len(mean)), mean, lo95, hi95
 
 
-def plot_results(data_list: list[dict], labels: list[str], output_stem: str, window: int = 50):
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    csv_rows: list[dict] = []
+def _load_results(input_paths: list[str]) -> dict[str, dict]:
+    """Load and merge results from multiple files. Returns method -> {runs, n_seeds}."""
+    merged = {}
+    for path in input_paths:
+        with open(path) as f:
+            data = json.load(f)
+        n_seeds = data['n_seeds']
+        for method, runs in data['results'].items():
+            merged[method] = {'runs': runs, 'n_seeds': n_seeds}
+    return merged
 
-    for i, (data, label) in enumerate(zip(data_list, labels)):
-        histories              = [r['best_history'] for r in data['runs']]
-        steps, mean, lo95, hi95 = _compute_stats(histories, window)
-        color                  = COLORS[i % len(COLORS)]
-        ls                     = LINE_STYLES[i % len(LINE_STYLES)]
 
-        ax.plot(steps, mean, color=color, linestyle=ls, linewidth=1.5, label=label)
-        ax.fill_between(steps, lo95, hi95, color=color, alpha=0.15)
+def _group_by_config(runs: list[dict], n_seeds: int) -> dict[str, list[dict]]:
+    grouped = {}
+    for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
+        start = cfg_idx * n_seeds
+        grouped[f'{x}x{y}'] = runs[start:start + n_seeds]
+    return grouped
 
-        for s, m, l, h in zip(steps.tolist(), mean.tolist(), lo95.tolist(), hi95.tolist()):
-            csv_rows.append({'step': s, 'label': label, 'mean': m, 'lo95': l, 'hi95': h})
 
-    ax.set_xlabel('Step')
-    ax.set_ylabel('Throughput (Mb/s)')
-    ax.legend(framealpha=0.9)
-    ax.grid(True, linewidth=0.4, alpha=0.5)
+def plot_results(merged: dict[str, dict], output_stem: str, window: int = 50):
+    n_configs = len(SCENARIO_CONFIGS)
+    n_cols    = 3
+    n_rows    = (n_configs + n_cols - 1) // n_cols
+    methods   = list(merged.keys())
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3.5 * n_rows), sharey=False)
+    axes_flat = axes.flatten()
+
+    csv_rows = []
+
+    for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
+        ax   = axes_flat[cfg_idx]
+        name = f'{x}x{y}'
+        n_steps = None
+
+        for i, method in enumerate(methods):
+            color = COLORS[i % len(COLORS)]
+            ls    = LINE_STYLES[i % len(LINE_STYLES)]
+            label = ALL_LABELS.get(method, method)
+            runs  = _group_by_config(merged[method]['runs'], merged[method]['n_seeds'])[name]
+
+            if 'best_history' in runs[0]:
+                histories        = [r['best_history'] for r in runs]
+                steps, mean, lo95, hi95 = _compute_stats(histories, window)
+                n_steps = len(steps)
+
+                ax.plot(steps, mean, color=color, linestyle=ls, linewidth=1.5, label=label)
+                ax.fill_between(steps, lo95, hi95, color=color, alpha=0.15)
+
+                for s, m, l, h in zip(steps.tolist(), mean.tolist(), lo95.tolist(), hi95.tolist()):
+                    csv_rows.append({'config': name, 'method': label, 'step': s, 'mean': m, 'lo95': l, 'hi95': h})
+            else:
+                rates = [r['best_rate'] for r in runs]
+                mean  = float(np.mean(rates))
+                ax.axhline(mean, color=color, linestyle=ls, linewidth=1.5, label=label)
+                if n_steps:
+                    for s in range(n_steps):
+                        csv_rows.append({'config': name, 'method': label, 'step': s, 'mean': mean, 'lo95': mean, 'hi95': mean})
+
+        ax.set_title(f'{x}×{y}  ({x * y} APs)')
+        ax.set_xlabel('Step')
+        ax.set_ylabel('Throughput (Mb/s)')
+        ax.grid(True, linewidth=0.4, alpha=0.5)
+
+    for ax in axes_flat[n_configs:]:
+        ax.set_visible(False)
+
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower right', bbox_to_anchor=(0.98, 0.02), framealpha=0.9)
     fig.tight_layout()
 
     os.makedirs(os.path.dirname(output_stem) if os.path.dirname(output_stem) else '.', exist_ok=True)
@@ -66,7 +125,7 @@ def plot_results(data_list: list[dict], labels: list[str], output_stem: str, win
     plt.close(fig)
 
     with open(f'{output_stem}.csv', 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['step', 'label', 'mean', 'lo95', 'hi95'])
+        writer = csv.DictWriter(f, fieldnames=['config', 'method', 'step', 'mean', 'lo95', 'hi95'])
         writer.writeheader()
         writer.writerows(csv_rows)
 
@@ -74,28 +133,20 @@ def plot_results(data_list: list[dict], labels: list[str], output_stem: str, win
 
 
 def main():
-    parser = ArgumentParser(description='Plot convergence curves from evaluate.py results')
-    parser.add_argument('--input',  nargs='+', required=True, help='eval JSON files')
-    parser.add_argument('--labels', nargs='+', default=None,  help='Legend labels (default: method from JSON)')
-    parser.add_argument('--output', type=str,  default=None,  help='Output path stem')
-    parser.add_argument('--window', type=int,  default=50,    help='Moving-average smoothing window')
+    parser = ArgumentParser(description='Plot convergence curves per scenario config')
+    parser.add_argument('--input',  nargs='+', required=True,
+                        help='JSON files from evaluate.py and/or baselines.py')
+    parser.add_argument('--output', type=str, default=None, help='Output path stem')
+    parser.add_argument('--window', type=int, default=50,   help='Moving-average smoothing window')
     args = parser.parse_args()
 
-    data_list = []
-    for p in args.input:
-        with open(p) as f:
-            data_list.append(json.load(f))
-
-    labels = args.labels or [
-        d.get('method', os.path.splitext(os.path.basename(p))[0])
-        for d, p in zip(data_list, args.input)
-    ]
+    merged = _load_results(args.input)
 
     output_stem = args.output or os.path.join(
         os.path.dirname(args.input[0]) or '.', 'convergence',
     )
 
-    plot_results(data_list, labels, output_stem, window=args.window)
+    plot_results(merged, output_stem, window=args.window)
 
 
 if __name__ == '__main__':
