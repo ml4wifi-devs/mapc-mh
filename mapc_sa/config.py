@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import mapc_sa._env  # noqa: F401 — must be first
+import mapc_sa.env  # noqa: F401 — must be first
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -10,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-class SAConfig(NamedTuple):
+class NetworkConfig(NamedTuple):
     """JAX-compatible network configuration.
 
     selected : (n_aps, max_stas) int32  — 1 if AP transmits to that STA slot
@@ -66,8 +67,8 @@ def make_scenario_info(scenario) -> ScenarioInfo:
     )
 
 
-def make_config_to_arrays(info: ScenarioInfo):
-    """Return a JIT-compiled fn: SAConfig -> (tx, tx_power, mcs) simulator arrays.
+def make_config_to_arrays(info: ScenarioInfo) -> Callable[[NetworkConfig], tuple[jax.Array, jax.Array, jax.Array]]:
+    """Return a JIT-compiled fn: NetworkConfig -> (tx, tx_power, mcs) simulator arrays.
 
     n_nodes is baked in via closure so the output shape is compile-time constant.
     """
@@ -78,7 +79,7 @@ def make_config_to_arrays(info: ScenarioInfo):
     arange   = jnp.arange(n_aps, dtype=jnp.int32)
 
     @jax.jit
-    def _to_arrays(config: SAConfig):
+    def _to_arrays(config: NetworkConfig):
         active      = jnp.any(config.selected > 0, axis=1)           # (n_aps,) bool
         sel_local   = jnp.argmax(config.selected, axis=1)            # (n_aps,) local STA idx
         sel_global  = sta_ids[arange, sel_local]                     # (n_aps,) global STA ID
@@ -100,14 +101,14 @@ def make_config_to_arrays(info: ScenarioInfo):
     return _to_arrays
 
 
-def make_random_config(info: ScenarioInfo):
-    """Return a JIT-compiled fn: PRNGKey -> SAConfig."""
+def make_random_config(info: ScenarioInfo) -> Callable[[jax.Array], NetworkConfig]:
+    """Return a JIT-compiled fn: PRNGKey -> NetworkConfig."""
     n_aps      = info.n_aps
     max_stas   = info.max_stas
     valid_mask = jnp.array(info.valid_mask, dtype=jnp.float32)
 
     @jax.jit
-    def _random_config(key: jax.Array) -> SAConfig:
+    def _random_config(key: jax.Array) -> NetworkConfig:
         key, k_key, perm_key, aps_key = jax.random.split(key, 4)
         ap_keys = jax.random.split(aps_key, n_aps)
 
@@ -130,13 +131,13 @@ def make_random_config(info: ScenarioInfo):
             return sel_row, tp_row, mcs_row
 
         selected, tx_power, mcs = jax.vmap(gen_ap)(ap_keys, is_active, valid_mask)
-        return SAConfig(selected=selected, tx_power=tx_power, mcs=mcs)
+        return NetworkConfig(selected=selected, tx_power=tx_power, mcs=mcs)
 
     return _random_config
 
 
-def config_to_serializable(config: SAConfig, info: ScenarioInfo) -> dict:
-    """Convert JAX SAConfig to a JSON-serializable dict."""
+def config_to_serializable(config: NetworkConfig, info: ScenarioInfo) -> dict:
+    """Convert JAX NetworkConfig to a JSON-serializable dict."""
     sel = np.array(config.selected).tolist()
     tp  = np.array(config.tx_power).tolist()
     mcs = np.array(config.mcs).tolist()

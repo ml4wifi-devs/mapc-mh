@@ -1,0 +1,11 @@
+{
+  "method": "rrhc",
+  "best_value": null,
+  "best_params": {
+    "restart_threshold": 100
+  },
+  "n_trials": 0,
+  "n_steps": 2000,
+  "n_seeds": 1,
+  "seed": 42
+}

@@ -13,11 +13,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "jax~=0.8.0",
+    "matplotlib~=3.10.8",
     "numpy~=2.3.5",
     "optuna~=4.5.0",
-    "joblib~=1.5.3",
-    "mapc_optimal_research@git+https://github.com/ml4wifi-devs/mapc-optimal-research",
+    "scipy~=1.17.1",
     "tqdm~=4.67.3",
+    "mapc_research@git+https://github.com/ml4wifi-devs/mapc-optimal-research",
 ]
 
 [tool.setuptools.packages]

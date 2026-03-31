@@ -1,13 +1,15 @@
-"""
-Final evaluation of SA on residential scenarios using best hyperparameters.
+"""Evaluate all methods on all scenarios and save per-run histories.
 
 Usage:
-    python -m mapc_sa.evaluate --version 1 --params results/best_params_v1.json
-    python -m mapc_sa.evaluate --params results/best_params_v{}.json  # all 4 versions
+    python -m mapc_sa.evaluate
+    python -m mapc_sa.evaluate --n_seeds 5 \\
+                               --params_sa   mapc_sa/methods/configs/best_params_sa.json \\
+                               --params_rrhc mapc_sa/methods/configs/best_params_rrhc.json \\
+                               --params_tabu mapc_sa/methods/configs/best_params_tabu.json
 """
 from __future__ import annotations
 
-import mapc_sa._env  # noqa: F401
+import mapc_sa.env  # noqa: F401
 
 import json
 import os
@@ -16,137 +18,76 @@ from argparse import ArgumentParser
 
 from tqdm import tqdm
 
-from mapc_sa.scenarios import RESIDENTIAL_SCENARIOS
+from mapc_sa.methods import METHODS, METHOD_LABELS
+from mapc_sa.scenarios import build_scenarios, N_SEEDS
 
 
-def _run_single(scenario_idx: int, split_idx: int, version: int,
-                params: dict, n_steps: int, top_n: int, seed: int) -> dict:
-    """Run one SA replicate on one scenario split. Executed in a worker process."""
-    import mapc_sa._env  # noqa: F401
-
-    from mapc_sa.scenarios import RESIDENTIAL_SCENARIOS
-    from mapc_sa.versions import VERSION_RUNNERS
-    from mapc_sa.config import config_to_serializable
-
-    scenario = RESIDENTIAL_SCENARIOS[scenario_idx]
-    sub_scenario, _ = scenario.split_scenario()[split_idx]
-
-    result = VERSION_RUNNERS[version](
-        sub_scenario,
-        seed=seed,
-        n_steps=n_steps,
-        top_n=top_n,
-        **params,
-    )
-
-    return {
-        'seed':        seed,
-        'T_0':         result.T_0,
-        'best_rate':   result.best_rate,
-        'best_config': config_to_serializable(result.best_config, result.info),
-        'top_configs': [
-            {'rate': rate, 'config': config_to_serializable(cfg, result.info)}
-            for rate, cfg in result.top_configs
-        ],
-        'history': result.history,
-    }
-
-
-def run_evaluation(
-    version: int,
-    params:  dict,
-    n_steps: int,
-    top_n:   int,
-    seed:    int,
-    n_runs:  int = 1,
-) -> list[dict]:
-    all_results = []
-
-    for scenario_idx, scenario in enumerate(tqdm(RESIDENTIAL_SCENARIOS, desc='Scenarios')):
-        splits = scenario.split_scenario()
-        scenario_results = []
-
-        for split_idx in range(len(splits)):
-            runs = [_run_single(scenario_idx, split_idx, version, params,
-                    n_steps, top_n, seed + run_i) for run_i in range(n_runs)]
-
-            scenario_results.append({'split_idx': split_idx, 'runs': list(runs)})
-
-        all_results.append({'scenario_idx': scenario_idx, 'splits': scenario_results})
-
-    return all_results
-
-
-def _evaluate_version(version: int, args) -> None:
-    params_path = args.params.format(version) if '{}' in (args.params or '') else args.params
-    output      = args.output or f'results/eval_v{version}.json'
-    os.makedirs(os.path.dirname(output) if os.path.dirname(output) else '.', exist_ok=True)
-
-    with open(params_path) as f:
-        params_data = json.load(f)
-
-    best_params   = params_data.get('best_params', params_data)
-    sa_param_keys = {'T_decay', 'T_0', 'max_jump_mcs', 'max_jump_power', 'concurrency_target'}
-    sa_params     = {k: v for k, v in best_params.items() if k in sa_param_keys}
-
-    print(f'SA v{version} | params: {sa_params}')
-    print(f'n_steps={args.n_steps}, top_n={args.top_n}, n_runs={args.n_runs}, seed={args.seed}')
-
-    t0      = time.perf_counter()
-    results = run_evaluation(
-        version = version,
-        params  = sa_params,
-        n_steps = args.n_steps,
-        top_n   = args.top_n,
-        seed    = args.seed,
-        n_runs  = args.n_runs,
-    )
-    elapsed = time.perf_counter() - t0
-
-    output_data = {
-        'version':         version,
-        'hyperparameters': sa_params,
-        'n_steps':         args.n_steps,
-        'top_n':           args.top_n,
-        'n_runs':          args.n_runs,
-        'seed':            args.seed,
-        'elapsed_seconds': elapsed,
-        'scenarios':       results,
-    }
-
-    with open(output, 'w') as f:
-        json.dump(output_data, f, indent=2)
-
-    for sc in results:
-        for sp in sc['splits']:
-            best_rates = [r['best_rate'] for r in sp['runs']]
-            print(f"  Scenario {sc['scenario_idx']} split {sp['split_idx']}: "
-                  f"best={max(best_rates):.2f} Mb/s "
-                  f"(mean {sum(best_rates)/len(best_rates):.2f})")
-
-    print(f'Total time: {elapsed:.1f}s | Saved to {output}')
+def _load_hparams(path: str | None) -> dict:
+    if not path:
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    return data.get('best_params', data)
 
 
 def main():
-    parser = ArgumentParser(description='Evaluate SA on residential scenarios')
-    parser.add_argument('--version', type=int, default=None, choices=[1, 2, 3, 4],
-                        help='SA version (default: all 4 sequentially)')
-    parser.add_argument('--params',  type=str, required=True,
-                        help='Path to best_params JSON from tuning.py. '
-                             'Use {} as version placeholder when running all versions '
-                             '(e.g. results/best_params_v{}.json)')
-    parser.add_argument('--output',  type=str, default=None,
-                        help='Output JSON path (only used when --version is specified)')
+    parser = ArgumentParser(description='Evaluate all methods on all scenarios')
+    parser.add_argument('--params_sa',   type=str, default='mapc_sa/methods/configs/best_params_sa.json')
+    parser.add_argument('--params_rrhc', type=str, default='mapc_sa/methods/configs/best_params_rrhc.json')
+    parser.add_argument('--params_tabu', type=str, default='mapc_sa/methods/configs/best_params_tabu.json')
+    parser.add_argument('--output',  type=str, default='results/evaluation.json')
     parser.add_argument('--n_steps', type=int, default=2000)
+    parser.add_argument('--n_seeds', type=int, default=N_SEEDS)
     parser.add_argument('--top_n',   type=int, default=10)
-    parser.add_argument('--n_runs',  type=int, default=1,
-                        help='Independent replicates per scenario (default: 1)')
     parser.add_argument('--seed',    type=int, default=42)
     args = parser.parse_args()
 
-    versions = [args.version] if args.version is not None else [1, 2, 3, 4]
-    for version in versions:
-        _evaluate_version(version, args)
+    hparams = {
+        'sa':   _load_hparams(args.params_sa),
+        'rrhc': _load_hparams(args.params_rrhc),
+        'tabu': _load_hparams(args.params_tabu),
+    }
+
+    scenarios = build_scenarios(args.n_seeds)
+    os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
+
+    print(f'Methods: {", ".join(METHOD_LABELS[m] for m in METHODS)}')
+    print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds)')
+    print(f'Steps: {args.n_steps}  |  Method seed: {args.seed}')
+    for m, kw in hparams.items():
+        if kw:
+            print(f'  {METHOD_LABELS[m]} hparams: {kw}')
+
+    t0      = time.perf_counter()
+    results = {}
+
+    for method, run_fn in METHODS.items():
+        kw   = hparams[method]
+        runs = []
+        for i, scenario in enumerate(tqdm(scenarios, desc=METHOD_LABELS[method])):
+            result = run_fn(scenario, seed=args.seed, n_steps=args.n_steps, top_n=args.top_n, **kw)
+            runs.append({
+                'scenario_idx': i,
+                'best_rate':    result.best_rate,
+                'history':      result.history,
+                'best_history': result.best_history,
+            })
+        results[method] = runs
+
+    elapsed = time.perf_counter() - t0
+    print(f'\nFinished in {elapsed:.1f}s  ({elapsed / 60:.1f} min)')
+
+    with open(args.output, 'w') as f:
+        json.dump({
+            'n_steps':         args.n_steps,
+            'n_seeds':         args.n_seeds,
+            'seed':            args.seed,
+            'hyperparameters': hparams,
+            'elapsed_seconds': elapsed,
+            'results':         results,
+        }, f, indent=2)
+
+    print(f'Saved to {args.output}')
 
 
 if __name__ == '__main__':

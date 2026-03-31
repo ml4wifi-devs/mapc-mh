@@ -1,0 +1,11 @@
+{
+  "method": "sa",
+  "best_value": null,
+  "best_params": {
+    "T_decay": 0.999
+  },
+  "n_trials": 0,
+  "n_steps": 2000,
+  "n_seeds": 1,
+  "seed": 42
+}

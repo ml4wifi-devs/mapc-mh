@@ -84,7 +84,7 @@ Produces a PDF, PNG, and a CSV compatible with TikZ/pgfplots.
 ```
 mapc_sa/
 ├── _env.py          # JAX CPU environment setup (imported first by all modules)
-├── config.py        # SAConfig (JAX NamedTuple), ScenarioInfo, array conversion
+├── config.py        # NetworkConfig (JAX NamedTuple), ScenarioInfo, array conversion
 ├── neighbor.py      # Neighbor functions for V1–V4 (pure JAX, JIT-compatible)
 ├── annealing.py     # JIT-compiled SA loop (jax.lax.scan), T₀ calibration, top-N buffer
 ├── versions.py      # Version runners: run_sa_v1 … run_sa_v4
