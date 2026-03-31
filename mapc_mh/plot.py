@@ -100,7 +100,9 @@ def plot_results(merged: dict[str, dict], output_stem: str, window: int = 50):
                 for s, m, l, h in zip(steps.tolist(), mean.tolist(), lo95.tolist(), hi95.tolist()):
                     csv_rows.append({'config': name, 'method': label, 'step': s, 'mean': m, 'lo95': l, 'hi95': h})
             else:
-                rates = [r['best_rate'] for r in runs]
+                rates = [r['best_rate'] for r in runs if r.get('best_rate') is not None]
+                if not rates:
+                    continue
                 mean  = float(np.mean(rates))
                 ax.axhline(mean, color=color, linestyle=ls, linewidth=1.5, label=label)
                 if n_steps:

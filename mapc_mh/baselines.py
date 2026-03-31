@@ -152,7 +152,11 @@ def main():
     parser.add_argument('--n_steps', type=int,  default=2000)
     parser.add_argument('--n_seeds', type=int,  default=N_SEEDS)
     parser.add_argument('--seed',    type=int,  default=42)
+    parser.add_argument('--t_optimal_max_aps', type=int, default=16,
+                        help='For t_optimal: skip configs with more APs than this (default: 16 = up to 4×4)')
     args = parser.parse_args()
+
+    from mapc_mh.scenarios import SCENARIO_CONFIGS
 
     scenarios = build_scenarios(args.n_seeds)
     os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
@@ -160,6 +164,8 @@ def main():
     print(f'Agents: {", ".join(AGENT_LABELS[a] for a in args.agents)}')
     print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds)')
     print(f'Steps: {args.n_steps}  |  Seed: {args.seed}')
+    if 't_optimal' in args.agents:
+        print(f't_optimal restricted to configs with ≤{args.t_optimal_max_aps} APs')
 
     t0      = time.perf_counter()
     results = {}
@@ -168,6 +174,12 @@ def main():
         run_fn = AGENTS[agent]
         runs   = []
         for i, scenario in enumerate(tqdm(scenarios, desc=AGENT_LABELS[agent])):
+            if agent == 't_optimal' and args.t_optimal_max_aps is not None:
+                cfg_idx = i // args.n_seeds
+                x, y    = SCENARIO_CONFIGS[cfg_idx]
+                if x * y > args.t_optimal_max_aps:
+                    runs.append({'scenario_idx': i, 'best_rate': None})
+                    continue
             run_result = run_fn(scenario, n_steps=args.n_steps, seed=args.seed)
             runs.append({'scenario_idx': i, **run_result})
         results[agent] = runs

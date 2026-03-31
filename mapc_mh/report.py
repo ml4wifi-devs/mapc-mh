@@ -30,7 +30,8 @@ def _group_rates(data: dict) -> dict[str, dict[str, list[float]]]:
         for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
             name  = f'{x}x{y}'
             start = cfg_idx * n_seeds
-            grouped[method][name] = [runs[start + s]['best_rate'] for s in range(n_seeds)]
+            rates_raw = [runs[start + s]['best_rate'] for s in range(n_seeds) if start + s < len(runs)]
+            grouped[method][name] = [r for r in rates_raw if r is not None]
 
     return grouped
 
@@ -52,7 +53,10 @@ def _print_table(all_grouped: dict[str, dict[str, list[float]]], methods: list[s
         row  = f"{name:<10}"
         for method in methods:
             rates = all_grouped[method][name]
-            row  += f"{f'{np.mean(rates):.1f}±{np.std(rates):.1f}':>{col_w}}"
+            if rates:
+                row += f"{f'{np.mean(rates):.1f}±{np.std(rates):.1f}':>{col_w}}"
+            else:
+                row += f"{'N/A':>{col_w}}"
         print(row)
 
     print(sep)
@@ -77,13 +81,14 @@ def _print_pvalue_matrices(all_grouped: dict[str, dict[str, list[float]]], metho
                 if i == j:
                     row += f"{'---':>{cell_w}}"
                 else:
-                    _, p   = stats.mannwhitneyu(
-                        all_grouped[methods[i]][name],
-                        all_grouped[methods[j]][name],
-                        alternative='two-sided',
-                    )
-                    marker = '' if p < alpha else '*'
-                    row   += f"{f'{p:.4f}{marker}':>{cell_w}}"
+                    ri = all_grouped[methods[i]][name]
+                    rj = all_grouped[methods[j]][name]
+                    if not ri or not rj:
+                        row += f"{'N/A':>{cell_w}}"
+                    else:
+                        _, p   = stats.mannwhitneyu(ri, rj, alternative='two-sided')
+                        marker = '' if p < alpha else '*'
+                        row   += f"{f'{p:.4f}{marker}':>{cell_w}}"
             print(row)
         print()
 
