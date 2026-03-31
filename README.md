@@ -1,4 +1,4 @@
-# Trajectory-Based Metaheuristics for MAPC
+# Cooling, Climbing, and Forgetting: Trajectory-Based Metaheuristics for WiFi Multi-AP Coordination
 
 We propose using **trajectory-based metaheuristics** — Simulated Annealing (SA), Random Restart Hill Climbing (RRHC), and Tabu Search — to optimize coordinated spatial reuse (Co-SR) scheduling in IEEE 802.11bn (Wi-Fi 8) networks. Starting from a random configuration, each method iteratively proposes and evaluates neighboring configurations, converging to high-throughput solutions without a surrogate model or offline training.
 
@@ -108,7 +108,7 @@ mapc_sa/
 
 ```bibtex
 @article{wojnar2026sa,
-  title={Trajectory-Based Metaheuristics for MAPC},
+  title={Cooling, Climbing, and Forgetting: Trajectory-Based Metaheuristics for WiFi Multi-AP Coordination},
   author={Wojnar, Maksymilian},
   year={2026}
 }
