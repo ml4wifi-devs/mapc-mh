@@ -32,9 +32,9 @@ mkdir -p results
 # ── Step 1: Hyperparameter tuning ─────────────────────────────────────────────
 if [[ $SKIP_TUNE -eq 0 ]]; then
     echo ""
-    echo "══════════════════════════════════════════════════════"
+    echo "======================================================"
     echo " Step 1: Tune hyperparameters"
-    echo "══════════════════════════════════════════════════════"
+    echo "======================================================"
 
     python -m mapc_mh.tune \
         --method sa --n_trials 100 --n_steps "$N_STEPS"
@@ -51,9 +51,9 @@ fi
 
 # ── Step 2: Evaluate SA / RRHC / Tabu ────────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 2: Evaluate methods (${N_SCENARIO_SEEDS} topology seeds × ${N_REPS_METHODS} reps, 9 configs)"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.evaluate \
     --n_seeds "$N_SCENARIO_SEEDS" \
@@ -64,9 +64,9 @@ python -m mapc_mh.evaluate \
 
 # ── Step 3a: H-MAB baseline ───────────────────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 3a: H-MAB baseline (${N_REPS_METHODS} reps, 2×2 only)"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.baselines \
     --agents  h_mab \
@@ -79,9 +79,9 @@ python -m mapc_mh.baselines \
 
 # ── Step 3b: DCF baseline ─────────────────────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 3b: DCF baseline (${N_REPS_DCF} reps, 2×2 only)"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.baselines \
     --agents  dcf \
@@ -94,9 +94,9 @@ python -m mapc_mh.baselines \
 
 # ── Step 3c: T-Optimal baseline (4×4 and smaller only) ───────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 3c: T-Optimal baseline (1 rep, ${N_SCENARIO_SEEDS} seeds, ≤ 4×4)"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.baselines \
     --agents            t_optimal \
@@ -108,9 +108,9 @@ python -m mapc_mh.baselines \
 
 # ── Step 4: Statistical comparison report ────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 4: Statistical comparison report"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.report \
     --input results/evaluation.json \
@@ -121,9 +121,9 @@ python -m mapc_mh.report \
 
 # ── Step 5: Plots ─────────────────────────────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Step 5: Generate convergence plots"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 
 python -m mapc_mh.plot \
     --input results/evaluation.json \
@@ -134,9 +134,9 @@ python -m mapc_mh.plot \
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " Pipeline complete!"
-echo "══════════════════════════════════════════════════════"
+echo "======================================================"
 echo " results/evaluation.json           SA / RRHC / Tabu  (5 seeds × 30 reps)"
 echo " results/baselines_h_mab.json      H-MAB             (30 reps, 2×2 only)"
 echo " results/baselines_dcf.json        DCF               ( 5 reps, 2×2 only)"

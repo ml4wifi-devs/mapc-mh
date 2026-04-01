@@ -40,38 +40,36 @@ By default tunes over 1 scenario seed per config (9 scenarios total) and saves r
 Evaluate all methods on all scenarios using tuned (or default) hyperparameters:
 
 ```bash
-python -m mapc_mh.evaluate
+python -m mapc_mh.evaluate --n_seeds 5 --n_reps 30
 ```
 
-With custom configs:
-
-```bash
-python -m mapc_mh.evaluate \
-    --params_sa   mapc_mh/methods/configs/best_params_sa.json \
-    --params_rrhc mapc_mh/methods/configs/best_params_rrhc.json \
-    --params_tabu mapc_mh/methods/configs/best_params_tabu.json
-```
-
-Results are saved to `results/evaluation.json`.
+`--n_seeds` controls the number of topology realizations per config; `--n_reps` controls how many times each realization is repeated with different method seeds (to measure algorithm variance). Results are saved to `results/evaluation.json`.
 
 ### Baselines
 
-Run H-MAB, DCF, and T-Optimal (SUM) baselines:
+Run baselines (each saves to a separate file):
 
 ```bash
-python -m mapc_mh.baselines
-python -m mapc_mh.baselines --agents t_optimal
-```
+# H-MAB: 30 reps on one 2×2 realization
+python -m mapc_mh.baselines --agents h_mab --n_seeds 1 --n_reps 30 --only_first_2x2 \
+    --output results/baselines_h_mab.json
 
-Results are saved to `results/baselines.json`.
+# DCF: 5 reps on one 2×2 realization
+python -m mapc_mh.baselines --agents dcf --n_seeds 1 --n_reps 5 --only_first_2x2 \
+    --output results/baselines_dcf.json
+
+# T-Optimal: 1 rep per topology seed, configs ≤ 4×4 only
+python -m mapc_mh.baselines --agents t_optimal --n_seeds 5 \
+    --output results/baselines_t_optimal.json
+```
 
 ### Statistical Report
 
 Print a comparison table (mean ± std) and pairwise Mann-Whitney U significance tests from saved results:
 
 ```bash
-python -m mapc_mh.report --input results/evaluation.json
-python -m mapc_mh.report --input results/evaluation.json results/baselines.json
+python -m mapc_mh.report --input results/evaluation.json \
+    results/baselines_h_mab.json results/baselines_dcf.json results/baselines_t_optimal.json
 ```
 
 ### Plotting
@@ -79,7 +77,8 @@ python -m mapc_mh.report --input results/evaluation.json results/baselines.json
 Plot convergence curves (best throughput vs. step) with mean ± 95% CI:
 
 ```bash
-python -m mapc_mh.plot --input results/evaluation.json
+python -m mapc_mh.plot --input results/evaluation.json \
+    results/baselines_h_mab.json results/baselines_dcf.json results/baselines_t_optimal.json
 ```
 
 Produces a PDF, PNG, and CSV compatible with TikZ/pgfplots.
