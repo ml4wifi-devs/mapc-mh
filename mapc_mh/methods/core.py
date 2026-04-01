@@ -25,58 +25,132 @@ class Result:
 
 
 # ---------------------------------------------------------------------------
-# Neighbor generation (random draw from all valid values)
+# Neighbor generation
 # ---------------------------------------------------------------------------
-
-def _activate_ap(
-    config: NetworkConfig, ap_idx: jax.Array,
-    val_key: jax.Array, valid_mask: jax.Array,
-) -> NetworkConfig:
-    max_stas = valid_mask.shape[1]
-    probs    = valid_mask[ap_idx].astype(jnp.float32)
-    probs    = probs / (probs.sum() + 1e-9)
-    sta_idx  = jax.random.choice(val_key, max_stas, p=probs)
-    new_row  = (
-        jnp.zeros(max_stas, dtype=jnp.int32).at[sta_idx].set(1)
-        * valid_mask[ap_idx]
-    )
-    return NetworkConfig(config.selected.at[ap_idx].set(new_row), config.tx_power, config.mcs)
-
-
-def _deactivate_ap(config: NetworkConfig, ap_idx: jax.Array) -> NetworkConfig:
-    max_stas = config.selected.shape[1]
-    new_sel  = jax.lax.cond(
-        jnp.sum(config.selected) > 1,
-        lambda: config.selected.at[ap_idx].set(jnp.zeros(max_stas, dtype=jnp.int32)),
-        lambda: config.selected,
-    )
-    return NetworkConfig(new_sel, config.tx_power, config.mcs)
+#
+# Mutation types:
+#   0 - mutate_selected: change AP-STA assignment
+#       - If AP inactive: activate with random valid STA
+#       - If AP active: 50% deactivate (if >1 active), 50% switch STA (if >1 valid)
+#   1 - mutate_tx_power: change tx_power for a random active AP at its selected STA
+#   2 - mutate_mcs: change MCS for a random active AP at its selected STA
+#
+# Invariants maintained:
+#   - At most 1 selected STA per AP (row-sum <= 1)
+#   - At least 1 AP is active globally (total selected >= 1)
+#   - Only valid STAs can be selected (respects valid_mask)
+#   - tx_power/mcs mutations always target meaningful positions
+# ---------------------------------------------------------------------------
 
 
 def neighbor(config: NetworkConfig, key: jax.Array, valid_mask: jax.Array) -> NetworkConfig:
-    """Generate a neighbor: randomly mutate selected AP, tx_power, or MCS."""
+    """Generate a neighbor by randomly mutating selected, tx_power, or MCS.
+
+    All mutations are meaningful:
+    - Selected mutations can activate, deactivate, or switch STAs
+    - tx_power/mcs mutations target active APs at their selected STA position
+    """
     n_aps, max_stas = valid_mask.shape
-    key, param_key, ap_key, sta_key, val_key = jax.random.split(key, 5)
+    key, param_key, ap_key, action_key, val_key = jax.random.split(key, 5)
 
     param_type = jax.random.randint(param_key, (), 0, 3)
-    ap_idx     = jax.random.randint(ap_key,    (), 0, n_aps)
-    sta_idx    = jax.random.randint(sta_key,   (), 0, max_stas)
 
+    # Precompute useful info about current config
+    ap_is_active = jnp.any(config.selected > 0, axis=1)  # (n_aps,) bool
+    n_active = jnp.sum(ap_is_active)
+    selected_sta_idx = jnp.argmax(config.selected, axis=1)  # (n_aps,) STA index per AP
+    n_valid_per_ap = jnp.sum(valid_mask, axis=1)  # (n_aps,)
+
+    # --- Mutation 0: mutate_selected ---
     def mutate_selected(_):
-        ap_active = jnp.any(config.selected[ap_idx] > 0)
-        return jax.lax.cond(
-            ap_active,
-            lambda: _deactivate_ap(config, ap_idx),
-            lambda: _activate_ap(config, ap_idx, val_key, valid_mask),
+        # Pick a random AP
+        ap_idx = jax.random.randint(ap_key, (), 0, n_aps)
+        is_active = ap_is_active[ap_idx]
+        current_sta = selected_sta_idx[ap_idx]
+        n_valid = n_valid_per_ap[ap_idx]
+
+        def _activate(ap_idx):
+            """Activate inactive AP with a random valid STA."""
+            probs = valid_mask[ap_idx].astype(jnp.float32)
+            probs = probs / (probs.sum() + 1e-9)
+            new_sta = jax.random.choice(val_key, max_stas, p=probs)
+            new_row = jnp.zeros(max_stas, dtype=jnp.int32).at[new_sta].set(1)
+            return NetworkConfig(
+                config.selected.at[ap_idx].set(new_row),
+                config.tx_power,
+                config.mcs,
+            )
+
+        def _deactivate(ap_idx):
+            """Deactivate AP (only if more than 1 AP is active)."""
+            new_selected = jax.lax.cond(
+                n_active > 1,
+                lambda: config.selected.at[ap_idx].set(jnp.zeros(max_stas, dtype=jnp.int32)),
+                lambda: config.selected,  # no-op: can't deactivate last AP
+            )
+            return NetworkConfig(new_selected, config.tx_power, config.mcs)
+
+        def _switch_sta(ap_idx, current_sta):
+            """Switch active AP to a different valid STA (only if >1 valid STA)."""
+            # Exclude current STA from selection
+            probs = valid_mask[ap_idx].astype(jnp.float32)
+            probs = probs.at[current_sta].set(0.0)
+            probs = probs / (probs.sum() + 1e-9)
+            new_sta = jax.random.choice(val_key, max_stas, p=probs)
+            new_row = jnp.zeros(max_stas, dtype=jnp.int32).at[new_sta].set(1)
+
+            new_selected = jax.lax.cond(
+                n_valid > 1,
+                lambda: config.selected.at[ap_idx].set(new_row),
+                lambda: config.selected,  # no-op: only 1 valid STA, can't switch
+            )
+            return NetworkConfig(new_selected, config.tx_power, config.mcs)
+
+        def when_active():
+            # 50% chance deactivate, 50% chance switch STA
+            do_switch = jax.random.randint(action_key, (), 0, 2)
+            return jax.lax.cond(
+                do_switch == 1,
+                lambda: _switch_sta(ap_idx, current_sta),
+                lambda: _deactivate(ap_idx),
+            )
+
+        def when_inactive():
+            return _activate(ap_idx)
+
+        return jax.lax.cond(is_active, when_active, when_inactive)
+
+    # --- Mutation 1: mutate_tx_power ---
+    def mutate_tx_power(_):
+        # Pick a random ACTIVE AP (weighted by active mask)
+        active_probs = ap_is_active.astype(jnp.float32)
+        active_probs = active_probs / (active_probs.sum() + 1e-9)
+        ap_idx = jax.random.choice(ap_key, n_aps, p=active_probs)
+
+        # Mutate tx_power at the selected STA position (the one that matters)
+        sta_idx = selected_sta_idx[ap_idx]
+        new_val = jax.random.randint(val_key, (), 0, 4)
+        return NetworkConfig(
+            config.selected,
+            config.tx_power.at[ap_idx, sta_idx].set(new_val),
+            config.mcs,
         )
 
-    def mutate_tx_power(_):
-        new_val = jax.random.randint(val_key, (), 0, 4)
-        return NetworkConfig(config.selected, config.tx_power.at[ap_idx, sta_idx].set(new_val), config.mcs)
-
+    # --- Mutation 2: mutate_mcs ---
     def mutate_mcs(_):
+        # Pick a random ACTIVE AP (weighted by active mask)
+        active_probs = ap_is_active.astype(jnp.float32)
+        active_probs = active_probs / (active_probs.sum() + 1e-9)
+        ap_idx = jax.random.choice(ap_key, n_aps, p=active_probs)
+
+        # Mutate MCS at the selected STA position (the one that matters)
+        sta_idx = selected_sta_idx[ap_idx]
         new_val = jax.random.randint(val_key, (), 0, 14)
-        return NetworkConfig(config.selected, config.tx_power, config.mcs.at[ap_idx, sta_idx].set(new_val))
+        return NetworkConfig(
+            config.selected,
+            config.tx_power,
+            config.mcs.at[ap_idx, sta_idx].set(new_val),
+        )
 
     return jax.lax.switch(param_type, [mutate_selected, mutate_tx_power, mutate_mcs], None)
 

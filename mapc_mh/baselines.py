@@ -17,6 +17,8 @@ from itertools import chain
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
+import pulp as plp
 import simpy
 from joblib import Parallel, delayed
 from mapc_dcf.channel import Channel
@@ -92,25 +94,23 @@ def _run_dcf_single(key, run, scenario, sim_time, logger):
     del des_env
 
 
-def run_dcf(scenario, n_steps: int, seed: int, n_runs: int = 8, tmp_dir: str = '/tmp/dcf') -> dict:
+def run_dcf(scenario, n_steps: int, seed: int, n_runs: int = 5, output_dir: str = 'results/dcf') -> dict:
     key      = jax.random.PRNGKey(seed)
     sim_time = n_steps * TAU
-    os.makedirs(tmp_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    logger       = Logger(sim_time, warmup_length=0.1, results_path=output_dir)
 
-    results_path = os.path.join(tmp_dir, 'scenario')
-    logger       = Logger(sim_time, warmup_length=0.1, results_path=results_path)
-
-    Parallel(n_jobs=min(n_runs, 16))(
+    Parallel(n_runs)(
         delayed(_run_dcf_single)(k, r, scenario, sim_time, logger)
         for k, r in zip(jax.random.split(key, n_runs), range(1, n_runs + 1))
     )
     logger.shutdown({'n_runs': n_runs})
 
-    with open(results_path + '.json') as f:
-        dcf_results = json.load(f)
+    df = pd.read_csv(output_dir + '.csv')
+    sim_time_max = df['SimTime'].max()
+    rates_per_run = df.groupby('RunNumber')['AMPDUSize'].sum() * 1e-6 / sim_time_max
 
-    rates = np.array(dcf_results['DataRate']['Data'], dtype=np.float32)
-    return {'best_rate': float(np.mean(rates))}
+    return rates_per_run.tolist()
 
 
 # ── T-Optimal (SUM) ───────────────────────────────────────────────────────────
@@ -126,6 +126,7 @@ def run_t_optimal(scenario, n_steps: int, seed: int) -> dict:
         access_points = access_points,
         channel_width = scenario.channel_width,
         opt_type      = OptimizationType.SUM,
+        solver        = plp.CPLEX_CMD(msg=False, threads=None)
     )
     _, total_rate = solver(path_loss, associations)
     return {'best_rate': float(total_rate)}
@@ -183,17 +184,22 @@ def main():
             x, y    = SCENARIO_CONFIGS[cfg_idx]
 
             skip = False
-            if args.only_first_2x2 and agent in ('h_mab', 'dcf') and (x, y) != (2, 2):
+            if args.only_first_2x2 and (x, y) != (2, 2):
                 skip = True
-            if agent == 't_optimal' and args.t_optimal_max_aps is not None and x * y > args.t_optimal_max_aps:
+            if agent == 't_optimal' and x * y > args.t_optimal_max_aps:
                 skip = True
-
-            for rep in range(args.n_reps):
-                if skip:
-                    runs.append({'scenario_idx': i, 'rep_idx': rep, 'best_rate': None})
-                else:
+            
+            if skip:
+                runs.extend([{'scenario_idx': i, 'rep_idx': rep, 'best_rate': None} for rep in range(args.n_reps)])
+            elif agent == 'dcf':
+                run_result = run_fn(scenario, n_steps=args.n_steps, seed=args.seed, n_runs=args.n_reps)
+                for rep_idx, rate in enumerate(run_result):
+                    runs.append({'scenario_idx': i, 'rep_idx': rep_idx, 'best_rate': rate})
+            else:
+                for rep in range(args.n_reps):
                     run_result = run_fn(scenario, n_steps=args.n_steps, seed=args.seed + rep)
                     runs.append({'scenario_idx': i, 'rep_idx': rep, **run_result})
+
         results[agent] = runs
 
     elapsed = time.perf_counter() - t0

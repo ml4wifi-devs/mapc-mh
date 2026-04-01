@@ -77,10 +77,25 @@ python -m mapc_mh.baselines \
     --only_first_2x2 \
     --output  results/baselines_h_mab.json
 
-# ── Step 3b: DCF baseline ─────────────────────────────────────────────────────
+# ── Step 3b: T-Optimal baseline (4×4 and smaller only) ────────────────────────
 echo ""
 echo "=========================================================================="
-echo " Step 3b: DCF baseline (${N_REPS_DCF} reps, 2×2 only)"
+echo " Step 3b: T-Optimal baseline (1 rep, ${N_SCENARIO_SEEDS} seeds, ≤ 4×4)"
+echo "=========================================================================="
+
+python -m mapc_mh.baselines \
+    --agents            t_optimal \
+    --n_seeds           "$N_SCENARIO_SEEDS" \
+    --n_reps            1 \
+    --n_steps           "$N_STEPS" \
+    --seed              "$SEED" \
+    --t_optimal_max_aps 16 \
+    --output            results/baselines_t_optimal.json
+
+# ── Step 3c: DCF baseline ─────────────────────────────────────────────────────
+echo ""
+echo "=========================================================================="
+echo " Step 3c: DCF baseline (${N_REPS_DCF} reps, 2×2 only)"
 echo "=========================================================================="
 
 python -m mapc_mh.baselines \
@@ -91,20 +106,6 @@ python -m mapc_mh.baselines \
     --seed    "$SEED" \
     --only_first_2x2 \
     --output  results/baselines_dcf.json
-
-# ── Step 3c: T-Optimal baseline (4×4 and smaller only) ───────────────────────
-echo ""
-echo "=========================================================================="
-echo " Step 3c: T-Optimal baseline (1 rep, ${N_SCENARIO_SEEDS} seeds, ≤ 4×4)"
-echo "=========================================================================="
-
-python -m mapc_mh.baselines \
-    --agents            t_optimal \
-    --n_seeds           "$N_SCENARIO_SEEDS" \
-    --n_steps           "$N_STEPS" \
-    --seed              "$SEED" \
-    --t_optimal_max_aps 16 \
-    --output            results/baselines_t_optimal.json
 
 # ── Step 4: Statistical comparison report ────────────────────────────────────
 echo ""
