@@ -48,22 +48,24 @@ def _compute_stats(histories: list[list[float]], window: int):
 
 
 def _load_results(input_paths: list[str]) -> dict[str, dict]:
-    """Load and merge results from multiple files. Returns method -> {runs, n_seeds}."""
+    """Load and merge results from multiple files. Returns method -> {runs, n_seeds, n_reps}."""
     merged = {}
     for path in input_paths:
         with open(path) as f:
             data = json.load(f)
         n_seeds = data['n_seeds']
+        n_reps  = data.get('n_reps', 1)
         for method, runs in data['results'].items():
-            merged[method] = {'runs': runs, 'n_seeds': n_seeds}
+            merged[method] = {'runs': runs, 'n_seeds': n_seeds, 'n_reps': n_reps}
     return merged
 
 
-def _group_by_config(runs: list[dict], n_seeds: int) -> dict[str, list[dict]]:
+def _group_by_config(runs: list[dict], n_seeds: int, n_reps: int = 1) -> dict[str, list[dict]]:
+    stride  = n_seeds * n_reps
     grouped = {}
     for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
-        start = cfg_idx * n_seeds
-        grouped[f'{x}x{y}'] = runs[start:start + n_seeds]
+        start = cfg_idx * stride
+        grouped[f'{x}x{y}'] = runs[start:start + stride]
     return grouped
 
 
@@ -87,7 +89,8 @@ def plot_results(merged: dict[str, dict], output_stem: str, window: int = 50):
             color = COLORS[i % len(COLORS)]
             ls    = LINE_STYLES[i % len(LINE_STYLES)]
             label = ALL_LABELS.get(method, method)
-            runs  = _group_by_config(merged[method]['runs'], merged[method]['n_seeds'])[name]
+            runs  = _group_by_config(merged[method]['runs'], merged[method]['n_seeds'], merged[method]['n_reps'])[name]
+            runs  = [r for r in runs if r.get('best_rate') is not None or 'best_history' in r]
 
             if 'best_history' in runs[0]:
                 histories        = [r['best_history'] for r in runs]

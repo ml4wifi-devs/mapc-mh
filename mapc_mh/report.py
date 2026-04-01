@@ -23,14 +23,16 @@ from mapc_mh.scenarios import SCENARIO_CONFIGS
 def _group_rates(data: dict) -> dict[str, dict[str, list[float]]]:
     """Group best_rates by method → scenario_name → [rates]."""
     n_seeds = data['n_seeds']
+    n_reps  = data.get('n_reps', 1)
+    stride  = n_seeds * n_reps
     grouped: dict[str, dict[str, list[float]]] = {}
 
     for method, runs in data['results'].items():
         grouped[method] = {}
         for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
             name  = f'{x}x{y}'
-            start = cfg_idx * n_seeds
-            rates_raw = [runs[start + s]['best_rate'] for s in range(n_seeds) if start + s < len(runs)]
+            start = cfg_idx * stride
+            rates_raw = [runs[start + s]['best_rate'] for s in range(stride) if start + s < len(runs)]
             grouped[method][name] = [r for r in rates_raw if r is not None]
 
     return grouped
@@ -106,7 +108,7 @@ def main():
         with open(path) as f:
             data = json.load(f)
         all_grouped.update(_group_rates(data))
-        print(f'Loaded {path}: {list(data["results"].keys())} (n_seeds={data["n_seeds"]})')
+        print(f'Loaded {path}: {list(data["results"].keys())} (n_seeds={data["n_seeds"]}, n_reps={data.get("n_reps", 1)})')
 
     methods = list(all_grouped.keys())
     print(f'\nMethods: {", ".join(ALL_LABELS.get(m, m) for m in methods)}')

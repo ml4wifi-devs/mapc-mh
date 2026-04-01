@@ -16,6 +16,7 @@ import os
 import time
 from argparse import ArgumentParser
 
+import jax
 from tqdm import tqdm
 
 from mapc_mh.methods import METHODS, METHOD_LABELS
@@ -37,7 +38,10 @@ def main():
     parser.add_argument('--params_tabu', type=str, default='mapc_mh/methods/configs/best_params_tabu.json')
     parser.add_argument('--output',  type=str, default='results/evaluation.json')
     parser.add_argument('--n_steps', type=int, default=2000)
-    parser.add_argument('--n_seeds', type=int, default=N_SEEDS)
+    parser.add_argument('--n_seeds', type=int, default=N_SEEDS,
+                        help='Number of topology seeds (scenario realizations) per config')
+    parser.add_argument('--n_reps',  type=int, default=1,
+                        help='Number of method repetitions per scenario (different method seeds)')
     parser.add_argument('--top_n',   type=int, default=10)
     parser.add_argument('--seed',    type=int, default=42)
     args = parser.parse_args()
@@ -52,8 +56,8 @@ def main():
     os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
 
     print(f'Methods: {", ".join(METHOD_LABELS[m] for m in METHODS)}')
-    print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds)')
-    print(f'Steps: {args.n_steps}  |  Method seed: {args.seed}')
+    print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds × {args.n_reps} reps)')
+    print(f'Steps: {args.n_steps}  |  Base seed: {args.seed}')
     for m, kw in hparams.items():
         if kw:
             print(f'  {METHOD_LABELS[m]} hparams: {kw}')
@@ -65,13 +69,16 @@ def main():
         kw   = hparams[method]
         runs = []
         for i, scenario in enumerate(tqdm(scenarios, desc=METHOD_LABELS[method])):
-            result = run_fn(scenario, seed=args.seed, n_steps=args.n_steps, top_n=args.top_n, **kw)
-            runs.append({
-                'scenario_idx': i,
-                'best_rate':    result.best_rate,
-                'history':      result.history,
-                'best_history': result.best_history,
-            })
+            for rep in range(args.n_reps):
+                result = run_fn(scenario, seed=args.seed + rep, n_steps=args.n_steps, top_n=args.top_n, **kw)
+                runs.append({
+                    'scenario_idx': i,
+                    'rep_idx':      rep,
+                    'best_rate':    result.best_rate,
+                    'history':      result.history,
+                    'best_history': result.best_history,
+                })
+            jax.clear_caches()
         results[method] = runs
 
     elapsed = time.perf_counter() - t0
@@ -81,6 +88,7 @@ def main():
         json.dump({
             'n_steps':         args.n_steps,
             'n_seeds':         args.n_seeds,
+            'n_reps':          args.n_reps,
             'seed':            args.seed,
             'hyperparameters': hparams,
             'elapsed_seconds': elapsed,

@@ -1,11 +1,11 @@
 {
   "method": "tabu",
-  "best_value": null,
+  "best_value": 2079.0177408854165,
   "best_params": {
-    "tabu_size": 20,
-    "n_candidates": 10
+    "tabu_size": 48,
+    "n_candidates": 8
   },
-  "n_trials": 0,
+  "n_trials": 100,
   "n_steps": 2000,
   "n_seeds": 1,
   "seed": 42

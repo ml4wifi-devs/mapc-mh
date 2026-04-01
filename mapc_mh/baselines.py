@@ -89,6 +89,7 @@ def _run_dcf_single(key, run, scenario, sim_time, logger):
 
     des_env.run(until=(logger.warmup_length + sim_time))
     logger.dump_acumulators(run)
+    del des_env
 
 
 def run_dcf(scenario, n_steps: int, seed: int, n_runs: int = 8, tmp_dir: str = '/tmp/dcf') -> dict:
@@ -97,7 +98,7 @@ def run_dcf(scenario, n_steps: int, seed: int, n_runs: int = 8, tmp_dir: str = '
     os.makedirs(tmp_dir, exist_ok=True)
 
     results_path = os.path.join(tmp_dir, 'scenario')
-    logger       = Logger(sim_time, warmup=0.1, path=results_path)
+    logger       = Logger(sim_time, warmup_length=0.1, results_path=results_path)
 
     Parallel(n_jobs=min(n_runs, 16))(
         delayed(_run_dcf_single)(k, r, scenario, sim_time, logger)
@@ -152,8 +153,12 @@ def main():
     parser.add_argument('--n_steps', type=int,  default=2000)
     parser.add_argument('--n_seeds', type=int,  default=N_SEEDS)
     parser.add_argument('--seed',    type=int,  default=42)
+    parser.add_argument('--n_reps',  type=int, default=1,
+                        help='Number of repetitions per scenario (different method seeds)')
     parser.add_argument('--t_optimal_max_aps', type=int, default=16,
                         help='For t_optimal: skip configs with more APs than this (default: 16 = up to 4×4)')
+    parser.add_argument('--only_first_2x2', action='store_true',
+                        help='For h_mab and dcf: run only on the 2×2 config')
     args = parser.parse_args()
 
     from mapc_mh.scenarios import SCENARIO_CONFIGS
@@ -162,8 +167,8 @@ def main():
     os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
 
     print(f'Agents: {", ".join(AGENT_LABELS[a] for a in args.agents)}')
-    print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds)')
-    print(f'Steps: {args.n_steps}  |  Seed: {args.seed}')
+    print(f'Scenarios: {len(scenarios)} ({len(scenarios) // args.n_seeds} configs × {args.n_seeds} seeds × {args.n_reps} reps)')
+    print(f'Steps: {args.n_steps}  |  Base seed: {args.seed}')
     if 't_optimal' in args.agents:
         print(f't_optimal restricted to configs with ≤{args.t_optimal_max_aps} APs')
 
@@ -172,16 +177,23 @@ def main():
 
     for agent in args.agents:
         run_fn = AGENTS[agent]
-        runs   = []
+        runs = []
         for i, scenario in enumerate(tqdm(scenarios, desc=AGENT_LABELS[agent])):
-            if agent == 't_optimal' and args.t_optimal_max_aps is not None:
-                cfg_idx = i // args.n_seeds
-                x, y    = SCENARIO_CONFIGS[cfg_idx]
-                if x * y > args.t_optimal_max_aps:
-                    runs.append({'scenario_idx': i, 'best_rate': None})
-                    continue
-            run_result = run_fn(scenario, n_steps=args.n_steps, seed=args.seed)
-            runs.append({'scenario_idx': i, **run_result})
+            cfg_idx = i // args.n_seeds
+            x, y    = SCENARIO_CONFIGS[cfg_idx]
+
+            skip = False
+            if args.only_first_2x2 and agent in ('h_mab', 'dcf') and (x, y) != (2, 2):
+                skip = True
+            if agent == 't_optimal' and args.t_optimal_max_aps is not None and x * y > args.t_optimal_max_aps:
+                skip = True
+
+            for rep in range(args.n_reps):
+                if skip:
+                    runs.append({'scenario_idx': i, 'rep_idx': rep, 'best_rate': None})
+                else:
+                    run_result = run_fn(scenario, n_steps=args.n_steps, seed=args.seed + rep)
+                    runs.append({'scenario_idx': i, 'rep_idx': rep, **run_result})
         results[agent] = runs
 
     elapsed = time.perf_counter() - t0
@@ -191,6 +203,7 @@ def main():
         json.dump({
             'n_steps':         args.n_steps,
             'n_seeds':         args.n_seeds,
+            'n_reps':          args.n_reps,
             'seed':            args.seed,
             'elapsed_seconds': elapsed,
             'results':         results,
