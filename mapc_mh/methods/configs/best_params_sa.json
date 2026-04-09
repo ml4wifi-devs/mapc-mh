@@ -1,8 +1,8 @@
 {
   "method": "sa",
-  "best_value": 1829.5647650824653,
+  "best_value": 1916.3626980251736,
   "best_params": {
-    "T_decay": 0.9997856627723308
+    "T_decay": 0.9993889695123284
   },
   "n_trials": 100,
   "n_steps": 2000,

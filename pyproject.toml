@@ -1,7 +1,7 @@
 [project]
 name = "mapc-mh"
 version = "0.1.0"
-description = "Trajectory-Based Metaheuristics for WiFi Multi-AP Coordination"
+description = "Trajectory-Based Metaheuristics for Coordinated Spatial Reuse"
 
 readme = "README.md"
 license = {file = "LICENSE"}
