@@ -1,0 +1,11 @@
+{
+  "method": "f_cg",
+  "best_value": null,
+  "best_params": {
+    "T_0": 5.0,
+    "T_decay": 0.999,
+    "patience": 10,
+    "max_pool": 64,
+    "lambda_mode": "bottleneck"
+  }
+}

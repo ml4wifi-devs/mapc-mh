@@ -37,13 +37,13 @@ if [[ $SKIP_TUNE -eq 0 ]]; then
     echo "=========================================================================="
 
     python -m mapc_mh.tune \
-        --method sa --n_trials 100 --n_steps "$N_STEPS"
+        --method t_sa --n_trials 100 --n_steps "$N_STEPS"
 
     python -m mapc_mh.tune \
-        --method rrhc --n_trials 100 --n_steps "$N_STEPS"
+        --method t_rrhc --n_trials 100 --n_steps "$N_STEPS"
 
     python -m mapc_mh.tune \
-        --method tabu --n_trials 100 --n_steps "$N_STEPS"
+        --method t_tabu --n_trials 100 --n_steps "$N_STEPS"
 else
     echo ""
     echo "Skipping tuning — using existing configs in mapc_mh/methods/configs/"

@@ -4,10 +4,10 @@ T-Optimal family: optimises best_rate (total throughput Mb/s).
 F-Optimal family: optimises best_min_rate (max-min per-station throughput Mb/s).
 
 Usage:
-    python -m mapc_mh.tune --method sa    --n_trials 100
-    python -m mapc_mh.tune --method rrhc  --n_trials 50
-    python -m mapc_mh.tune --method tabu  --n_trials 100
-    python -m mapc_mh.tune --method f_sa  --n_trials 100
+    python -m mapc_mh.tune --method t_sa   --n_trials 100
+    python -m mapc_mh.tune --method t_rrhc --n_trials 50
+    python -m mapc_mh.tune --method t_tabu --n_trials 100
+    python -m mapc_mh.tune --method f_sa   --n_trials 100
 """
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ _F_FAMILY = set(F_METHODS.keys())
 
 
 def _search_space(method: str, trial: optuna.Trial) -> dict:
-    if method == 'sa':
+    if method == 't_sa':
         return {'T_decay': trial.suggest_float('T_decay', 0.99, 0.9999, log=True)}
-    if method == 'rrhc':
+    if method == 't_rrhc':
         return {'restart_threshold': trial.suggest_int('restart_threshold', 10, 500, log=True)}
-    if method == 'tabu':
+    if method == 't_tabu':
         return {
             'tabu_size':    trial.suggest_int('tabu_size',    5,  100),
             'n_candidates': trial.suggest_int('n_candidates', 3,  30),
@@ -50,6 +50,14 @@ def _search_space(method: str, trial: optuna.Trial) -> dict:
             'k_max':              trial.suggest_int('k_max',              2,  3),
             'local_search_steps': trial.suggest_int('local_search_steps', 5, 50, log=True),
             'max_configs':        trial.suggest_int('max_configs',         4, 24),
+        }
+    if method == 'f_cg':
+        return {
+            'T_0':         trial.suggest_float('T_0',      0.1,  50.0, log=True),
+            'T_decay':     trial.suggest_float('T_decay',  0.99, 0.9999, log=True),
+            'patience':    trial.suggest_int('patience',   3,    30),
+            'max_pool':    trial.suggest_int('max_pool',   16,   128, log=True),
+            'lambda_mode': trial.suggest_categorical('lambda_mode', ['bottleneck', 'inverse_gap']),
         }
     raise ValueError(f'Unknown method: {method}')
 

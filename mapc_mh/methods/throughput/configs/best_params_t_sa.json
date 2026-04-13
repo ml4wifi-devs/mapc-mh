@@ -1,5 +1,5 @@
 {
-  "method": "sa",
+  "method": "t_sa",
   "best_value": 1916.3626980251736,
   "best_params": {
     "T_decay": 0.9993889695123284

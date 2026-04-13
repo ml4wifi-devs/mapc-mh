@@ -1,5 +1,5 @@
 {
-  "method": "tabu",
+  "method": "t_tabu",
   "best_value": 2240.2138943142363,
   "best_params": {
     "tabu_size": 79,

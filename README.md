@@ -28,9 +28,9 @@ uv sync
 Tune hyperparameters for a single method using Optuna (TPE sampler):
 
 ```bash
-python -m mapc_mh.tune --method sa   --n_trials 100
-python -m mapc_mh.tune --method rrhc --n_trials 50
-python -m mapc_mh.tune --method tabu --n_trials 100
+python -m mapc_mh.tune --method t_sa   --n_trials 100
+python -m mapc_mh.tune --method t_rrhc --n_trials 50
+python -m mapc_mh.tune --method t_tabu --n_trials 100
 ```
 
 By default tunes over 1 scenario seed per config (9 scenarios total) and saves results to `mapc_mh/methods/configs/best_params_{method}.json`.

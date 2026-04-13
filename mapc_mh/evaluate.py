@@ -3,9 +3,9 @@
 Usage:
     python -m mapc_mh.evaluate
     python -m mapc_mh.evaluate --skip_f \\
-        --params_sa   mapc_mh/methods/throughput/configs/best_params_sa.json \\
-        --params_rrhc mapc_mh/methods/throughput/configs/best_params_rrhc.json \\
-        --params_tabu mapc_mh/methods/throughput/configs/best_params_tabu.json
+        --params_t_sa   mapc_mh/methods/throughput/configs/best_params_t_sa.json \\
+        --params_t_rrhc mapc_mh/methods/throughput/configs/best_params_t_rrhc.json \\
+        --params_t_tabu mapc_mh/methods/throughput/configs/best_params_t_tabu.json
     python -m mapc_mh.evaluate --skip_t \\
         --params_f_sa mapc_mh/methods/fairness/configs/best_params_f_sa.json
 """
@@ -97,17 +97,19 @@ def _run_family(
 def main():
     parser = ArgumentParser(description='Evaluate T-Optimal and F-Optimal methods on all scenarios')
     # T-Optimal hparam paths
-    parser.add_argument('--params_sa',   type=str,
-                        default='mapc_mh/methods/throughput/configs/best_params_sa.json')
-    parser.add_argument('--params_rrhc', type=str,
-                        default='mapc_mh/methods/throughput/configs/best_params_rrhc.json')
-    parser.add_argument('--params_tabu', type=str,
-                        default='mapc_mh/methods/throughput/configs/best_params_tabu.json')
+    parser.add_argument('--params_t_sa',   type=str,
+                        default='mapc_mh/methods/throughput/configs/best_params_t_sa.json')
+    parser.add_argument('--params_t_rrhc', type=str,
+                        default='mapc_mh/methods/throughput/configs/best_params_t_rrhc.json')
+    parser.add_argument('--params_t_tabu', type=str,
+                        default='mapc_mh/methods/throughput/configs/best_params_t_tabu.json')
     # F-Optimal hparam paths
     parser.add_argument('--params_f_sa',  type=str,
                         default='mapc_mh/methods/fairness/configs/best_params_f_sa.json')
     parser.add_argument('--params_f_vns', type=str,
                         default='mapc_mh/methods/fairness/configs/best_params_f_vns.json')
+    parser.add_argument('--params_f_cg',  type=str,
+                        default='mapc_mh/methods/fairness/configs/best_params_f_cg.json')
     # Shared
     parser.add_argument('--output',  type=str, default='results/evaluation.json')
     parser.add_argument('--n_steps', type=int, default=2000)
@@ -120,13 +122,14 @@ def main():
     args = parser.parse_args()
 
     t_hparams = {
-        'sa':   _load_hparams(args.params_sa),
-        'rrhc': _load_hparams(args.params_rrhc),
-        'tabu': _load_hparams(args.params_tabu),
+        't_sa':   _load_hparams(args.params_t_sa),
+        't_rrhc': _load_hparams(args.params_t_rrhc),
+        't_tabu': _load_hparams(args.params_t_tabu),
     }
     f_hparams = {
         'f_sa':  _load_hparams(args.params_f_sa),
         'f_vns': _load_hparams(args.params_f_vns),
+        'f_cg':  _load_hparams(args.params_f_cg),
     }
 
     scenarios = build_scenarios(args.n_seeds)

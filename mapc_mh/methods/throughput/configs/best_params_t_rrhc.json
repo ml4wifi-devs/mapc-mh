@@ -1,5 +1,5 @@
 {
-  "method": "rrhc",
+  "method": "t_rrhc",
   "best_value": 1739.1198120117188,
   "best_params": {
     "restart_threshold": 173
