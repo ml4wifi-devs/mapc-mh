@@ -3,33 +3,23 @@
 Solution representation
 -----------------------
 An FSolution holds a fixed-size batch of Co-SR sub-configurations (NetworkConfig)
-and a logit vector. Weights are always softmax(logits), which lies on the simplex.
-Unused slots are driven toward very negative logits by the search; there is no hard
-cap on the "active" count — the optimizer naturally regularises it via zero weights.
+and a boolean active mask. Weights are computed externally by an LP solver (max-min
+over the per-config per-station rate matrix). The metaheuristic proposes configs only;
+the LP assigns optimal time fractions.
 
 Evaluation
 ----------
 All sub-configs are evaluated in parallel via jax.vmap over the fixed leading
-dimension. Inactive slots (near-zero weight) contribute negligibly to the per-station
-weighted mean. No threads or processes are used anywhere.
-
-Objective: lexicographic max-min
----------------------------------
-The acceptance criterion in SA (and other trajectory algorithms) uses leximin_delta,
-which sorts per-station throughput vectors ascending and finds the first index where
-they differ. Identical vectors yield delta=0, which SA accepts (exploration).
+dimension (JIT-compiled). The resulting per-config per-station rate matrix is then
+passed to the LP solver (Python-side, not JIT).
 
 Neighbourhood operators
 -----------------------
-Four moves (modify_config, perturb_weights, add_config, remove_config) dispatched via
-jax.lax.switch. Move probabilities are proportional to approximate neighbourhood size,
-so that parameter-level modifications dominate structural changes as the solution grows.
+Three moves (modify_config, add_config, remove_config) dispatched via jax.lax.switch.
+perturb_weights is dropped — weights are LP-optimal given the config set, so there is
+nothing to tune. Move probabilities are proportional to neighbourhood size.
 
-LP ablation seam
-----------------
-The evaluator accepts a WeightStrategy callable (see weights.py). The default
-identity_strategy lets the metaheuristic control logits directly. Swap in an LP
-strategy later to freeze config structure and optimise weights analytically.
+No threads or processes are used anywhere. Parallelism is jax.vmap only.
 """
 from __future__ import annotations
 
@@ -50,15 +40,12 @@ from mapc_mh.methods.core import neighbor
 
 
 # ---------------------------------------------------------------------------
-# Module-level knobs (import and tweak in VNS/GA/Memetic as needed)
+# Module-level knobs
 # ---------------------------------------------------------------------------
 
-LIVE_EPS        = 1e-4   # weight threshold below which a slot is considered inactive
-PERTURB_SIGMA   = 0.5    # std of Gaussian noise added to logits in perturb_weights
-MODIFY_BIAS     = 3.0    # multiplier making modify_config more likely per live config
-REVIVE_LOGIT_DELTA = -0.693   # ln(0.5): new slot gets ~half the weight of the strongest
-REMOVE_LOGIT    = -30.0  # logit value that effectively zeros a slot's weight
-REJECTION_CAP   = 32     # maximum retries in the coverage rejection loop
+LIVE_EPS     = 1e-4   # weight threshold for "active" slot (used only for coverage checks)
+MODIFY_BIAS  = 3.0    # multiplier making modify_config more likely per active config
+REJECTION_CAP = 32    # maximum retries in the coverage rejection loop
 
 
 # ---------------------------------------------------------------------------
@@ -66,16 +53,15 @@ REJECTION_CAP   = 32     # maximum retries in the coverage rejection loop
 # ---------------------------------------------------------------------------
 
 class FSolution(NamedTuple):
-    """A weighted set of Co-SR sub-configurations for F-Optimal search.
+    """A set of Co-SR sub-configurations for F-Optimal search.
 
     configs : NetworkConfig — batched over a fixed leading axis of size max_configs.
               Each field (selected, tx_power, mcs) has shape (max_configs, n_aps, max_stas).
-    logits  : (max_configs,) float32 — pre-softmax weights.
-              weights = softmax(logits) ∈ simplex.
-              Inactive slots have logits ≈ -30 → weight ≈ 0.
+    active  : (max_configs,) bool — which slots are currently in use.
+              LP weights are computed externally from the per-config rate matrix.
     """
     configs: NetworkConfig
-    logits:  jax.Array
+    active:  jax.Array   # (max_configs,) bool
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +71,12 @@ class FSolution(NamedTuple):
 @dataclass
 class FResult:
     best_solution:   FSolution
-    best_score:      float        # leximin surrogate: min_rate * 1e3 + sum_rate
-    best_min_rate:   float        # raw max-min throughput (Mb/s)
-    best_sum_rate:   float        # total throughput (Mb/s), for comparison vs T-Optimal
+    best_score:      float        # surrogate: min_rate * 1e3 + sum_rate
+    best_min_rate:   float        # LP-optimal max-min throughput (Mb/s)
+    best_sum_rate:   float        # total throughput (Mb/s)
     best_fairness:   float        # Jain's fairness index over per-station rates
-    best_per_sta:    list[float]  # per-station rates at the best solution
-    history:         list[float]  # surrogate score per step
+    best_per_sta:    list[float]  # per-station rates of the best solution
+    history:         list[float]  # surrogate score per step (best-so-far)
     min_history:     list[float]  # min per-station throughput per step (best-so-far)
     sum_history:     list[float]  # total throughput per step (best-so-far)
     info:            ScenarioInfo | None = None
@@ -113,10 +99,8 @@ def make_coverage_check(info: ScenarioInfo) -> Callable[[FSolution], jax.Array]:
 
     @jax.jit
     def _all_covered(sol: FSolution) -> jax.Array:
-        weights  = jax.nn.softmax(sol.logits)                        # (M,)
-        live     = (weights > LIVE_EPS)[:, None, None]               # (M, 1, 1)
-        # selected: (M, n_aps, max_stas) — 1 if that sub-config assigns AP to STA
-        contrib  = (sol.configs.selected * live).sum(axis=0) > 0     # (n_aps, max_stas)
+        live    = sol.active[:, None, None]                              # (M, 1, 1) bool
+        contrib = (sol.configs.selected.astype(jnp.bool_) & live).any(axis=0)  # (n_aps, max_stas)
         return jnp.all(contrib | ~valid_mask)
 
     return _all_covered
@@ -127,26 +111,20 @@ def make_coverage_check(info: ScenarioInfo) -> Callable[[FSolution], jax.Array]:
 # ---------------------------------------------------------------------------
 
 def make_random_f_solution(
-    info: ScenarioInfo,
+    info:        ScenarioInfo,
     max_configs: int,
-    key: jax.Array,
+    key:         jax.Array,
 ) -> FSolution:
     """Generate an FSolution guaranteed to cover all stations.
 
-    Strategy: for each valid (ap_idx, sta_slot) pair, create one "basis" sub-config
-    that forces exactly that station to be active (the AP is active and assigned to
-    that STA slot; other APs are randomised). This guarantees full station coverage
-    by construction. Remaining slots (max_configs - n_stas) are filled with fresh
-    random configs at logit=-30 (inactive initially).
-
-    Active slots (basis configs) get logit=0 so softmax gives uniform weights.
-    The search then explores weight perturbations and config modifications.
+    One basis sub-config per station forces that (ap, sta) pair to be assigned.
+    Remaining slots are filled with random configs but marked inactive (active=False).
+    Only basis configs are active at start; the search adds/removes configs from there.
     """
     random_config_fn = make_random_config(info)
-    n_aps, max_stas = info.n_aps, info.max_stas
+    max_stas = info.max_stas
 
-    # Enumerate valid (ap_idx, sta_slot) pairs — these are the n_stas stations
-    valid_pairs = np.argwhere(info.valid_mask)           # (n_stas, 2)  numpy
+    valid_pairs = np.argwhere(info.valid_mask)   # (n_stas, 2) numpy
     n_stas      = len(valid_pairs)
 
     if n_stas > max_configs:
@@ -158,29 +136,22 @@ def make_random_f_solution(
     @jax.jit
     def _make(key: jax.Array) -> FSolution:
         key, rand_key = jax.random.split(key)
-
-        # --- Basis configs: one per station, guaranteed to cover it ---
         basis_keys = jax.random.split(key, n_stas)
 
         def make_basis(ap_idx_sta_slot, bkey):
             ap_idx, sta_slot = ap_idx_sta_slot[0], ap_idx_sta_slot[1]
-            base  = random_config_fn(bkey)  # random config as starting point
-            # Force-assign: AP ap_idx serves sta_slot
-            forced_row = (
-                jnp.zeros(max_stas, dtype=jnp.int32).at[sta_slot].set(1)
-            )
+            base = random_config_fn(bkey)
+            forced_row   = jnp.zeros(max_stas, dtype=jnp.int32).at[sta_slot].set(1)
             new_selected = base.selected.at[ap_idx].set(forced_row)
             return NetworkConfig(new_selected, base.tx_power, base.mcs)
 
-        pairs_jnp = jnp.array(valid_pairs, dtype=jnp.int32)       # (n_stas, 2)
-        basis_configs = jax.vmap(make_basis)(pairs_jnp, basis_keys)  # batched
+        pairs_jnp     = jnp.array(valid_pairs, dtype=jnp.int32)
+        basis_configs = jax.vmap(make_basis)(pairs_jnp, basis_keys)
 
-        # --- Filler configs: random, will be inactive at logit=-30 ---
-        n_filler  = max_configs - n_stas
-        fill_keys = jax.random.split(rand_key, max(n_filler, 1))
+        n_filler   = max_configs - n_stas
+        fill_keys  = jax.random.split(rand_key, max(n_filler, 1))
         filler_configs = jax.vmap(random_config_fn)(fill_keys[:max(n_filler, 1)])
 
-        # --- Stack into fixed-size batch ---
         if n_filler > 0:
             all_selected = jnp.concatenate([basis_configs.selected, filler_configs.selected], axis=0)
             all_tp       = jnp.concatenate([basis_configs.tx_power, filler_configs.tx_power], axis=0)
@@ -192,115 +163,55 @@ def make_random_f_solution(
 
         configs = NetworkConfig(all_selected, all_tp, all_mcs)
 
-        # Basis slots get logit=0 (active, uniform weight); fillers get logit=-30
-        logits = jnp.concatenate([
-            jnp.zeros(n_stas, dtype=jnp.float32),
-            jnp.full(max(n_filler, 0), REMOVE_LOGIT, dtype=jnp.float32),
+        # Only basis slots are active; fillers are inactive
+        active = jnp.concatenate([
+            jnp.ones(n_stas,              dtype=jnp.bool_),
+            jnp.zeros(max(n_filler, 0),   dtype=jnp.bool_),
         ])
-
-        return FSolution(configs=configs, logits=logits)
+        return FSolution(configs=configs, active=active)
 
     return _make(key)
 
 
 # ---------------------------------------------------------------------------
-# Evaluator
+# Evaluator — JIT-compiled, vmap over sub-configs
 # ---------------------------------------------------------------------------
 
 def make_evaluator(
     scenario,
-    info: ScenarioInfo,
+    info:        ScenarioInfo,
     max_configs: int,
-    weight_strategy,   # WeightStrategy from weights.py
-) -> Callable[[FSolution, jax.Array], tuple[jax.Array, jax.Array, jax.Array]]:
-    """Return a JIT-compiled evaluator: (FSolution, key) -> (per_sta, sub_sta_rates, weights).
+) -> Callable[[FSolution, jax.Array], jax.Array]:
+    """Return a JIT-compiled evaluator: (FSolution, key) -> sub_sta_rates (max_configs, n_stas).
 
-    per_sta       : (n_stas,) — weighted mean per-station throughput in Mb/s
-    sub_sta_rates : (max_configs, n_stas) — per sub-config per-station throughput
-    weights       : (max_configs,) — softmax weights actually used
+    Runs all sub-configs in parallel via jax.vmap. The returned rate matrix is then
+    passed to the LP solver (Python-side) to compute optimal mixing weights.
 
     Per-station throughput extraction
     ----------------------------------
-    The simulator's `internals.average_data_rate` is indexed by TRANSMITTER node and
-    reported in bits/s. For APs, `average_data_rate[ap_node_id]` equals the throughput
-    received by the AP's currently assigned STA. We extract per-station rates as:
-
-        rate_at(ap_idx, sta_slot) = selected[ap_idx, sta_slot]
-                                    * average_data_rate[ap_ids[ap_idx]] / 1e6   [Mb/s]
-
-    Only the assigned (selected=1) slot of each AP contributes; all other slots are 0.
-    Stations not assigned in a sub-config receive 0 from that sub-config's rate.
-    The final per-station vector is the weighted mean across all sub-configs.
+    average_data_rate is indexed by TRANSMITTER node. For AP ap_idx:
+        rate(ap_idx, sta_slot) = selected[ap_idx, sta_slot] * avg_data_rate[ap_node_id] / 1e6
     """
-    to_arrays  = make_config_to_arrays(info)
-    ap_ids_jnp = jnp.array(info.ap_ids, dtype=jnp.int32)   # (n_aps,)
-    n_aps      = info.n_aps
-    max_stas   = info.max_stas
-
-    # Flat indices into the (n_aps * max_stas,) array for valid (ap, sta) slots
-    valid_flat_idx = jnp.array(
-        np.flatnonzero(info.valid_mask), dtype=jnp.int32
-    )  # (n_stas,)
+    to_arrays      = make_config_to_arrays(info)
+    ap_ids_jnp     = jnp.array(info.ap_ids, dtype=jnp.int32)   # (n_aps,)
+    max_stas       = info.max_stas
+    valid_flat_idx = jnp.array(np.flatnonzero(info.valid_mask), dtype=jnp.int32)  # (n_stas,)
 
     def _eval_one(config: NetworkConfig, k: jax.Array) -> jax.Array:
-        """Evaluate one sub-config; return per-station rates (n_stas,) in Mb/s."""
         tx, tx_p, mcs = to_arrays(config)
         result    = scenario(k, tx, tx_p, mcs, return_internals=True)
-        internals = result[2]
-
-        # ap_rate[i] = throughput of AP i's transmission in Mb/s (0 if AP inactive)
-        ap_rate = internals.average_data_rate[ap_ids_jnp] / jnp.float32(1e6)  # (n_aps,)
-
-        # For each (ap, sta) slot, rate = ap_rate[ap] if that slot is selected, else 0
-        ap_rate_expanded = jnp.repeat(ap_rate, max_stas)               # (n_aps * max_stas,)
-        selected_flat    = config.selected.ravel().astype(jnp.float32)  # (n_aps * max_stas,)
-        rate_flat        = selected_flat * ap_rate_expanded             # (n_aps * max_stas,)
-
-        return rate_flat[valid_flat_idx]  # (n_stas,)
+        ap_rate   = result[2].average_data_rate[ap_ids_jnp] / jnp.float32(1e6)  # (n_aps,) Mb/s
+        ap_rate_expanded = jnp.repeat(ap_rate, max_stas)                          # (n_aps*max_stas,)
+        selected_flat    = config.selected.ravel().astype(jnp.float32)
+        rate_flat        = selected_flat * ap_rate_expanded
+        return rate_flat[valid_flat_idx]   # (n_stas,)
 
     @jax.jit
-    def _evaluate(sol: FSolution, key: jax.Array):
+    def _evaluate(sol: FSolution, key: jax.Array) -> jax.Array:
         keys = jax.random.split(key, max_configs)
-        # Parallel evaluation of all sub-configs — vmap, not threads
-        sub_sta_rates = jax.vmap(_eval_one)(sol.configs, keys)  # (max_configs, n_stas)
-
-        # Apply weight strategy (identity by default; LP ablation replaces this)
-        logits_for_eval = weight_strategy(sol, sub_sta_rates)
-        weights = jax.nn.softmax(logits_for_eval)                # (max_configs,)
-
-        per_sta = (weights[:, None] * sub_sta_rates).sum(axis=0) # (n_stas,)
-        return per_sta, sub_sta_rates, weights
+        return jax.vmap(_eval_one)(sol.configs, keys)   # (max_configs, n_stas)
 
     return _evaluate
-
-
-# ---------------------------------------------------------------------------
-# Leximin comparison
-# ---------------------------------------------------------------------------
-
-@jax.jit
-def leximin_delta(new_per_sta: jax.Array, old_per_sta: jax.Array) -> jax.Array:
-    """Lexicographic max-min delta: delta at the first index where sorted vectors differ.
-
-    Both vectors are sorted ascending (worst station first). The returned scalar is
-    new_sorted[k] - old_sorted[k] at the smallest k where they differ.
-    If identical, returns 0.0 (SA will accept — promotes exploration).
-    """
-    a = jnp.sort(new_per_sta)           # (n_stas,) ascending
-    b = jnp.sort(old_per_sta)
-    diff    = a - b                     # (n_stas,)
-    tol     = jnp.float32(1e-6)
-    differs = jnp.abs(diff) > tol       # (n_stas,) bool
-    first_k = jnp.argmax(differs)       # first True; 0 if all False
-    return jnp.where(jnp.any(differs), diff[first_k], jnp.float32(0.0))
-
-
-def leximin_score(per_sta: jax.Array) -> jax.Array:
-    """Cheap scalar summary of a per-station vector for tracking 'best so far'.
-
-    Not used as the acceptance criterion; only for FResult history fields.
-    """
-    return jnp.min(per_sta) * jnp.float32(1e3) + jnp.sum(per_sta)
 
 
 # ---------------------------------------------------------------------------
@@ -314,41 +225,38 @@ def make_neighbor_f(
 ) -> Callable[[FSolution, jax.Array], FSolution]:
     """Return a JIT-compiled neighbour generator for FSolution.
 
-    Four move types dispatched by jax.lax.switch:
-      0 modify_config   — mutate one sub-config's NetworkConfig (prob ∝ n_live * modify_bias)
-      1 perturb_weights — add Gaussian noise to all logits        (prob ∝ 1)
-      2 add_config      — revive the least-weight slot             (prob ∝ 1)
-      3 remove_config   — zero out a live slot                     (prob ∝ 1, 0 if n_live≤1)
+    Three move types dispatched by jax.lax.switch:
+      0 modify_config  — mutate one active sub-config's NetworkConfig  (prob ∝ n_active * modify_bias)
+      1 add_config     — activate an inactive slot with a fresh config  (prob ∝ 1)
+      2 remove_config  — deactivate an active slot                      (prob ∝ 1, 0 if n_active≤1)
 
-    Probabilities are proportional to approximate neighbourhood size so that
-    parameter-level modifications dominate structural changes as the solution grows.
     A coverage rejection loop (up to REJECTION_CAP tries) discards neighbours that
-    leave any station unserved.
+    leave any station uncovered. Falls back to current sol on cap exhaustion.
     """
-    valid_mask  = jnp.array(info.valid_mask, dtype=jnp.int32)
-    all_covered = make_coverage_check(info)
+    valid_mask   = jnp.array(info.valid_mask, dtype=jnp.int32)
+    all_covered  = make_coverage_check(info)
     random_config_fn = make_random_config(info)
 
     @jax.jit
     def _neighbor(sol: FSolution, key: jax.Array) -> FSolution:
 
         def _sample_candidate(key: jax.Array) -> FSolution:
-            weights  = jax.nn.softmax(sol.logits)              # (M,)
-            n_live   = jnp.sum(weights > LIVE_EPS).astype(jnp.float32)
+            active_f = sol.active.astype(jnp.float32)   # (M,)
+            n_active = jnp.sum(active_f)
 
             key, op_key, slot_key, val_key, cfg_key = jax.random.split(key, 5)
 
-            # --- Move probability weights ---
-            c_modify  = modify_bias * n_live
-            c_perturb = jnp.float32(1.0)
-            c_add     = jnp.float32(1.0)
-            c_remove  = jnp.where(n_live > jnp.float32(1.0), jnp.float32(1.0), jnp.float32(0.0))
-            move_logits = jnp.log(jnp.stack([c_modify, c_perturb, c_add, c_remove]) + jnp.float32(1e-9))
+            # Move probabilities proportional to neighbourhood size
+            c_modify = modify_bias * n_active
+            c_add    = jnp.float32(1.0)
+            c_remove = jnp.where(n_active > jnp.float32(1.0), jnp.float32(1.0), jnp.float32(0.0))
+            move_logits = jnp.log(jnp.stack([c_modify, c_add, c_remove]) + jnp.float32(1e-9))
             op = jax.random.categorical(op_key, move_logits)
 
             # --- 0: modify_config ---
             def modify_config(_):
-                chosen = jax.random.choice(slot_key, max_configs, p=weights)
+                probs  = active_f / jnp.maximum(n_active, jnp.float32(1.0))
+                chosen = jax.random.choice(slot_key, max_configs, p=probs)
                 sub = NetworkConfig(
                     sol.configs.selected[chosen],
                     sol.configs.tx_power[chosen],
@@ -358,42 +266,28 @@ def make_neighbor_f(
                 new_sel = sol.configs.selected.at[chosen].set(new_sub.selected)
                 new_tp  = sol.configs.tx_power.at[chosen].set(new_sub.tx_power)
                 new_mcs = sol.configs.mcs.at[chosen].set(new_sub.mcs)
-                return FSolution(
-                    configs=NetworkConfig(new_sel, new_tp, new_mcs),
-                    logits=sol.logits,
-                )
+                return FSolution(NetworkConfig(new_sel, new_tp, new_mcs), sol.active)
 
-            # --- 1: perturb_weights ---
-            def perturb_weights(_):
-                noise = jax.random.normal(val_key, (max_configs,)) * jnp.float32(PERTURB_SIGMA)
-                return FSolution(configs=sol.configs, logits=sol.logits + noise)
-
-            # --- 2: add_config ---
+            # --- 1: add_config ---
             def add_config(_):
-                weakest   = jnp.argmin(weights)
-                new_cfg   = random_config_fn(cfg_key)
-                new_sel   = sol.configs.selected.at[weakest].set(new_cfg.selected)
-                new_tp    = sol.configs.tx_power.at[weakest].set(new_cfg.tx_power)
-                new_mcs   = sol.configs.mcs.at[weakest].set(new_cfg.mcs)
-                # Set logit so the new slot joins at ~half the current max weight
-                new_logit = jnp.max(sol.logits) + jnp.float32(REVIVE_LOGIT_DELTA)
-                new_logits = sol.logits.at[weakest].set(new_logit)
-                return FSolution(
-                    configs=NetworkConfig(new_sel, new_tp, new_mcs),
-                    logits=new_logits,
-                )
+                # First inactive slot (argmax on ~active)
+                weakest = jnp.argmax((~sol.active).astype(jnp.int32))
+                new_cfg = random_config_fn(cfg_key)
+                new_sel = sol.configs.selected.at[weakest].set(new_cfg.selected)
+                new_tp  = sol.configs.tx_power.at[weakest].set(new_cfg.tx_power)
+                new_mcs = sol.configs.mcs.at[weakest].set(new_cfg.mcs)
+                new_active = sol.active.at[weakest].set(True)
+                return FSolution(NetworkConfig(new_sel, new_tp, new_mcs), new_active)
 
-            # --- 3: remove_config ---
+            # --- 2: remove_config ---
             def remove_config(_):
-                chosen     = jax.random.choice(slot_key, max_configs, p=weights)
-                new_logits = sol.logits.at[chosen].set(jnp.float32(REMOVE_LOGIT))
-                return FSolution(configs=sol.configs, logits=new_logits)
+                probs  = active_f / jnp.maximum(n_active, jnp.float32(1.0))
+                chosen = jax.random.choice(slot_key, max_configs, p=probs)
+                return FSolution(sol.configs, sol.active.at[chosen].set(False))
 
-            return jax.lax.switch(op, [modify_config, perturb_weights, add_config, remove_config], None)
+            return jax.lax.switch(op, [modify_config, add_config, remove_config], None)
 
-        # Coverage rejection loop — up to REJECTION_CAP tries.
-        # If all retries are exhausted, fall back to the current (valid) sol so
-        # the SA step sees delta=0 and accepts (harmless exploration no-op).
+        # Coverage rejection loop
         def _cond(state):
             candidate, _, tries = state
             return (~all_covered(candidate)) & (tries < REJECTION_CAP)
@@ -401,8 +295,7 @@ def make_neighbor_f(
         def _body(state):
             _, key, tries = state
             key, sub_key = jax.random.split(key)
-            candidate = _sample_candidate(sub_key)
-            return candidate, key, tries + 1
+            return _sample_candidate(sub_key), key, tries + jnp.int32(1)
 
         key, init_key = jax.random.split(key)
         init_candidate = _sample_candidate(init_key)
@@ -416,21 +309,21 @@ def make_neighbor_f(
 # Shared setup for F-family algorithms
 # ---------------------------------------------------------------------------
 
-def setup_f(scenario, seed: int, max_configs: int, weight_strategy):
-    """Build info, split keys, generate a random covered initial solution + evaluate it.
+def setup_f(scenario, seed: int, max_configs: int):
+    """Build info, split keys, generate a covered initial solution and evaluate it.
 
-    max_configs is auto-bumped to n_stas when the default would be too small to fit
-    the required basis configs. JAX will recompile for each distinct effective value.
+    Returns: (info, evaluate, run_key, initial_sol, initial_sub_sta_rates, max_configs)
+    max_configs is auto-bumped to n_stas when needed.
     """
     info    = make_scenario_info(scenario)
     n_stas  = int(info.valid_mask.sum())
     max_configs = max(max_configs, n_stas)
-    evaluate = make_evaluator(scenario, info, max_configs, weight_strategy)
+    evaluate = make_evaluator(scenario, info, max_configs)
 
-    key                         = jax.random.PRNGKey(seed)
+    key                             = jax.random.PRNGKey(seed)
     key, sol_key, eval_key, run_key = jax.random.split(key, 4)
 
-    initial_sol = make_random_f_solution(info, max_configs, sol_key)
-    per_sta, _, _ = evaluate(initial_sol, eval_key)
+    initial_sol       = make_random_f_solution(info, max_configs, sol_key)
+    initial_sub_rates = evaluate(initial_sol, eval_key)
 
-    return info, evaluate, run_key, initial_sol, per_sta, max_configs
+    return info, evaluate, run_key, initial_sol, initial_sub_rates, max_configs
