@@ -247,15 +247,21 @@ def _make_runner(evaluate, fine_neighbor_f, shakers, k_max, local_search_steps, 
     def _ls_step(carry, _):
         """One step of fine-grained hill-climbing local search."""
         sol, per_sta, key, stuck = carry
-        key, nbr_key, eval_key = jax.random.split(key, 3)
-        candidate   = fine_neighbor_f(sol, nbr_key)
-        c_per_sta, _, _ = evaluate(candidate, eval_key)
-        improved    = leximin_delta(c_per_sta, per_sta) > jnp.float32(0.0)
-        do_update   = improved & ~stuck
-        new_sol     = jax.lax.cond(do_update, lambda: candidate, lambda: sol)
-        new_per_sta = jax.lax.cond(do_update, lambda: c_per_sta, lambda: per_sta)
-        new_stuck   = stuck | ~improved
-        return (new_sol, new_per_sta, key, new_stuck), None
+
+        def _when_stuck(_):
+            # True early-break emulation: once stuck, skip neighbour generation/evaluation.
+            return (sol, per_sta, key, stuck), None
+
+        def _when_searching(_):
+            next_key, nbr_key, eval_key = jax.random.split(key, 3)
+            candidate = fine_neighbor_f(sol, nbr_key)
+            c_per_sta, _, _ = evaluate(candidate, eval_key)
+            improved = leximin_delta(c_per_sta, per_sta) > jnp.float32(0.0)
+            new_sol = jax.lax.cond(improved, lambda: candidate, lambda: sol)
+            new_per_sta = jax.lax.cond(improved, lambda: c_per_sta, lambda: per_sta)
+            return (new_sol, new_per_sta, next_key, ~improved), None
+
+        return jax.lax.cond(stuck, _when_stuck, _when_searching, None)
 
     def _vns_step(state, _):
         """One outer VNS iteration: shake → local search → acceptance → best update."""
