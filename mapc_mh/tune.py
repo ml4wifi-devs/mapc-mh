@@ -45,6 +45,12 @@ def _search_space(method: str, trial: optuna.Trial) -> dict:
             'T_decay':     trial.suggest_float('T_decay',     0.99, 0.9999, log=True),
             'max_configs': trial.suggest_int('max_configs',   4,    24),
         }
+    if method == 'f_vns':
+        return {
+            'k_max':              trial.suggest_int('k_max',              2,  3),
+            'local_search_steps': trial.suggest_int('local_search_steps', 5, 50, log=True),
+            'max_configs':        trial.suggest_int('max_configs',         4, 24),
+        }
     raise ValueError(f'Unknown method: {method}')
 
 

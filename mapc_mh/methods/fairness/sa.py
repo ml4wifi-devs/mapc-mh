@@ -15,7 +15,6 @@ from mapc_mh.methods.fairness.core import (
     leximin_delta, leximin_score,
     make_neighbor_f, setup_f,
     jains_index,
-    MODIFY_BIAS,
 )
 from mapc_mh.methods.fairness.weights import WeightStrategy, identity_strategy
 

@@ -1,0 +1,9 @@
+{
+  "method": "f_vns",
+  "best_value": null,
+  "best_params": {
+    "k_max": 3,
+    "local_search_steps": 20,
+    "max_configs": 32
+  }
+}

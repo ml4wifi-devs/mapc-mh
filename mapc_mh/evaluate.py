@@ -104,8 +104,10 @@ def main():
     parser.add_argument('--params_tabu', type=str,
                         default='mapc_mh/methods/throughput/configs/best_params_tabu.json')
     # F-Optimal hparam paths
-    parser.add_argument('--params_f_sa', type=str,
+    parser.add_argument('--params_f_sa',  type=str,
                         default='mapc_mh/methods/fairness/configs/best_params_f_sa.json')
+    parser.add_argument('--params_f_vns', type=str,
+                        default='mapc_mh/methods/fairness/configs/best_params_f_vns.json')
     # Shared
     parser.add_argument('--output',  type=str, default='results/evaluation.json')
     parser.add_argument('--n_steps', type=int, default=2000)
@@ -123,7 +125,8 @@ def main():
         'tabu': _load_hparams(args.params_tabu),
     }
     f_hparams = {
-        'f_sa': _load_hparams(args.params_f_sa),
+        'f_sa':  _load_hparams(args.params_f_sa),
+        'f_vns': _load_hparams(args.params_f_vns),
     }
 
     scenarios = build_scenarios(args.n_seeds)

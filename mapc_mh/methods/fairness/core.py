@@ -53,12 +53,11 @@ from mapc_mh.methods.core import neighbor
 # Module-level knobs (import and tweak in VNS/GA/Memetic as needed)
 # ---------------------------------------------------------------------------
 
-LIVE_EPS        = 1e-4   # weight threshold below which a slot is considered inactive
-PERTURB_SIGMA   = 0.5    # std of Gaussian noise added to logits in perturb_weights
-MODIFY_BIAS     = 3.0    # multiplier making modify_config more likely per live config
-REVIVE_LOGIT_DELTA = -0.693   # ln(0.5): new slot gets ~half the weight of the strongest
-REMOVE_LOGIT    = -30.0  # logit value that effectively zeros a slot's weight
-REJECTION_CAP   = 32     # maximum retries in the coverage rejection loop
+LIVE_EPS           = 1e-4   # weight threshold below which a slot is considered inactive
+PERTURB_SIGMA      = 0.5    # std of Gaussian noise added to logits in perturb_weights
+REVIVE_LOGIT_DELTA = -0.693 # ln(0.5): new slot gets ~half the weight of the strongest
+REMOVE_LOGIT       = -30.0  # logit value that effectively zeros a slot's weight
+REJECTION_CAP      = 32     # maximum retries in the coverage rejection loop
 
 
 # ---------------------------------------------------------------------------
@@ -310,18 +309,17 @@ def leximin_score(per_sta: jax.Array) -> jax.Array:
 def make_neighbor_f(
     info:        ScenarioInfo,
     max_configs: int,
-    modify_bias: float = MODIFY_BIAS,
 ) -> Callable[[FSolution, jax.Array], FSolution]:
     """Return a JIT-compiled neighbour generator for FSolution.
 
     Four move types dispatched by jax.lax.switch:
-      0 modify_config   — mutate one sub-config's NetworkConfig (prob ∝ n_live * modify_bias)
+      0 modify_config   — mutate one sub-config's NetworkConfig (prob ∝ n_live)
       1 perturb_weights — add Gaussian noise to all logits        (prob ∝ 1)
       2 add_config      — revive the least-weight slot             (prob ∝ 1)
       3 remove_config   — zero out a live slot                     (prob ∝ 1, 0 if n_live≤1)
 
-    Probabilities are proportional to approximate neighbourhood size so that
-    parameter-level modifications dominate structural changes as the solution grows.
+    modify_config probability is proportional to n_live (neighbourhood size);
+    all other moves have weight 1. No additional bias multiplier.
     A coverage rejection loop (up to REJECTION_CAP tries) discards neighbours that
     leave any station unserved.
     """
@@ -339,7 +337,7 @@ def make_neighbor_f(
             key, op_key, slot_key, val_key, cfg_key = jax.random.split(key, 5)
 
             # --- Move probability weights ---
-            c_modify  = modify_bias * n_live
+            c_modify  = n_live
             c_perturb = jnp.float32(1.0)
             c_add     = jnp.float32(1.0)
             c_remove  = jnp.where(n_live > jnp.float32(1.0), jnp.float32(1.0), jnp.float32(0.0))
