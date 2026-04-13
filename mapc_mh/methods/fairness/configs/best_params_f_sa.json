@@ -1,0 +1,8 @@
+{
+  "method": "f_sa",
+  "best_value": null,
+  "best_params": {
+    "T_decay": 0.9998,
+    "max_configs": 32
+  }
+}

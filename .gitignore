@@ -208,3 +208,5 @@ __marimo__/
 
 # Experiment results
 results/
+results_t_opt/
+results_f_opt/
