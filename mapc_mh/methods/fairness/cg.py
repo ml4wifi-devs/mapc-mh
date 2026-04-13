@@ -132,10 +132,10 @@ class _PSAState(NamedTuple):
 
 def make_pricer(
     scenario,
-    info:    ScenarioInfo,
-    n_steps: int,
-    T_0:     float,
-    T_decay: float,
+    info:        ScenarioInfo,
+    inner_steps: int,
+    T_0:         float,
+    T_decay:     float,
 ):
     """Return fn (lambda_vec: np.ndarray, init_config: NetworkConfig, key)
     -> (best_config, best_per_sta, best_obj).
@@ -183,8 +183,8 @@ def make_pricer(
             best_config=init_config, best_obj=init_obj, best_per_sta=init_rates,
             key=key,
         )
-        steps  = jnp.arange(n_steps, dtype=jnp.int32)
-        lam_b  = jnp.broadcast_to(lam, (n_steps, lam.shape[0]))
+        steps  = jnp.arange(inner_steps, dtype=jnp.int32)
+        lam_b  = jnp.broadcast_to(lam, (inner_steps, lam.shape[0]))
         final, _ = jax.lax.scan(_step, init, (steps, lam_b))
         return final.best_config, final.best_per_sta, final.best_obj
 
@@ -255,9 +255,9 @@ def run(
     scenario,
     *,
     seed:           int   = 42,
-    n_outer:        int   = 50,
-    n_steps:        int   = 1000,
-    patience:       int   = 5,
+    n_steps:        int   = 100,      # OUTER CG iterations
+    inner_steps:   int   = 1000,     # pricing SA steps per outer iteration
+    patience:       int   = 10,
     max_pool:       int   = 64,
     T_0:            float = 5.0,
     T_decay:        float = 0.999,
@@ -266,10 +266,14 @@ def run(
     pricing_diversify_on_stall: bool = True,
     top_n:          int   = 10,        # ignored, accepted for interface parity
 ) -> FResult:
-    """Run primal-only column generation for max-min fairness."""
+    """Run primal-only column generation for max-min fairness.
+
+    n_steps     : outer column-generation iterations (budget knob, like other methods).
+    inner_steps : pricing SA steps per outer iteration (hparam).
+    """
     info         = make_scenario_info(scenario)
     eval_per_sta = make_per_sta_evaluator(scenario, info)
-    pricer       = make_pricer(scenario, info, n_steps=n_steps, T_0=T_0, T_decay=T_decay)
+    pricer       = make_pricer(scenario, info, inner_steps=inner_steps, T_0=T_0, T_decay=T_decay)
     rng_np       = np.random.default_rng(seed)
 
     master_key = jax.random.PRNGKey(seed)
@@ -297,7 +301,7 @@ def run(
     stalls        = 0
     stall_kick    = 0
 
-    for it in range(n_outer):
+    for it in range(n_steps):
         # --- choose lambda (no duals) ---
         if lambda_mode == 'inverse_gap':
             lam = _lambda_inverse_gap(per_sta, t, eps_gap=1.0)

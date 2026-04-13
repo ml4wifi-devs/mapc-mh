@@ -53,10 +53,11 @@ def _search_space(method: str, trial: optuna.Trial) -> dict:
         }
     if method == 'f_cg':
         return {
-            'T_0':         trial.suggest_float('T_0',      0.1,  50.0, log=True),
-            'T_decay':     trial.suggest_float('T_decay',  0.99, 0.9999, log=True),
-            'patience':    trial.suggest_int('patience',   3,    30),
-            'max_pool':    trial.suggest_int('max_pool',   16,   128, log=True),
+            'inner_steps': trial.suggest_int('inner_steps', 200,  4000, log=True),
+            'T_0':         trial.suggest_float('T_0',       0.1,  50.0, log=True),
+            'T_decay':     trial.suggest_float('T_decay',   0.99, 0.9999, log=True),
+            'patience':    trial.suggest_int('patience',    3,    30),
+            'max_pool':    trial.suggest_int('max_pool',    16,   128, log=True),
             'lambda_mode': trial.suggest_categorical('lambda_mode', ['bottleneck', 'inverse_gap']),
         }
     raise ValueError(f'Unknown method: {method}')
