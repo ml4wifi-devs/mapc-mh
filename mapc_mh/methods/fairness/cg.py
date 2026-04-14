@@ -117,53 +117,80 @@ def make_per_sta_evaluator(scenario, info: ScenarioInfo):
 
 
 # ---------------------------------------------------------------------------
-# Weighted-objective SA pricer
+# Weighted-objective Tabu pricer
 # ---------------------------------------------------------------------------
 
-class _PSAState(NamedTuple):
-    config:      NetworkConfig
-    cur_obj:     jax.Array
-    cur_per_sta: jax.Array
-    best_config: NetworkConfig
-    best_obj:    jax.Array
+def _first_n_primes(n: int) -> list[int]:
+    primes, candidate = [], 2
+    while len(primes) < n:
+        if all(candidate % p != 0 for p in primes):
+            primes.append(candidate)
+        candidate += 1
+    return primes
+
+
+class _PTabuState(NamedTuple):
+    config:       NetworkConfig
+    cur_obj:      jax.Array
+    cur_per_sta:  jax.Array
+    best_config:  NetworkConfig
+    best_obj:     jax.Array
     best_per_sta: jax.Array
-    key:         jax.Array
+    tabu_hashes:  jax.Array
+    tabu_ptr:     jax.Array
+    key:          jax.Array
 
 
 def make_pricer(
     scenario,
-    info:        ScenarioInfo,
-    inner_steps: int,
-    T_0:         float,
-    T_decay:     float,
+    info:         ScenarioInfo,
+    inner_steps:  int,
+    tabu_size:    int,
+    n_candidates: int,
 ):
     """Return fn (lambda_vec: np.ndarray, init_config: NetworkConfig, key)
     -> (best_config, best_per_sta, best_obj).
 
-    Maximises dot(lambda, per_sta_rates). Reuses the throughput SA neighbour
-    operator; only the scalar objective changes.
+    Maximises dot(lambda, per_sta_rates) via Tabu Search. Reuses the throughput
+    Tabu machinery (config hashing via primes, ring buffer, aspiration); only
+    the scalar objective changes.
     """
     eval_per_sta = make_per_sta_evaluator(scenario, info)
     valid_mask   = jnp.array(info.valid_mask, dtype=jnp.int32)
-    T_0_f        = jnp.float32(T_0)
-    T_decay_f    = jnp.float32(T_decay)
+    n_aps        = info.n_aps
+    max_stas     = info.max_stas
+    primes       = jnp.array(_first_n_primes(n_aps * max_stas * 3), dtype=jnp.int32)
 
-    def _step(state: _PSAState, carry):
-        step_idx, lam = carry
-        T = T_0_f * (T_decay_f ** step_idx.astype(jnp.float32))
-        key, nbr_key, sim_key, acc_key = jax.random.split(state.key, 4)
+    def _hash(config: NetworkConfig) -> jax.Array:
+        flat = jnp.concatenate([config.selected.ravel(), config.tx_power.ravel(), config.mcs.ravel()])
+        return jnp.sum(flat * primes) & 0x7FFFFFFF
 
-        cand       = neighbor(state.config, nbr_key, valid_mask)
-        cand_rates = eval_per_sta(cand, sim_key)
-        cand_obj   = jnp.sum(lam * cand_rates)
+    def _step(state: _PTabuState, lam):
+        key, *cand_keys = jax.random.split(state.key, n_candidates + 1)
+        cand_keys = jnp.stack(cand_keys)
 
-        delta      = cand_obj - state.cur_obj
-        log_accept = jnp.minimum(jnp.float32(0.0), delta / jnp.maximum(T, jnp.float32(1e-30)))
-        accept     = jnp.log(jax.random.uniform(acc_key)) < log_accept
+        def gen_one(k):
+            nbr_key, sim_key = jax.random.split(k)
+            cand  = neighbor(state.config, nbr_key, valid_mask)
+            rates = eval_per_sta(cand, sim_key)
+            obj   = jnp.sum(lam * rates)
+            return cand.selected, cand.tx_power, cand.mcs, rates, obj, _hash(cand)
 
-        new_cfg   = jax.lax.cond(accept, lambda: cand, lambda: state.config)
-        new_obj   = jnp.where(accept, cand_obj,   state.cur_obj)
-        new_rates = jax.lax.cond(accept, lambda: cand_rates, lambda: state.cur_per_sta)
+        c_sel, c_tp, c_mcs, c_rates, c_objs, c_hashes = jax.vmap(gen_one)(cand_keys)
+
+        is_tabu   = jax.vmap(lambda h: jnp.any(state.tabu_hashes == h))(c_hashes)
+        aspirated = c_objs > state.best_obj
+        blocked   = is_tabu & ~aspirated
+        scores    = c_objs + jnp.where(blocked, jnp.float32(-1e10), jnp.float32(0.0))
+        best_idx  = jnp.argmax(scores)
+
+        new_cfg   = NetworkConfig(c_sel[best_idx], c_tp[best_idx], c_mcs[best_idx])
+        new_obj   = c_objs[best_idx]
+        new_rates = c_rates[best_idx]
+
+        old_hash   = _hash(state.config)
+        new_hashes = state.tabu_hashes.at[state.tabu_ptr].set(old_hash)
+        new_ptr    = (state.tabu_ptr + 1) % tabu_size
 
         improved = new_obj > state.best_obj
         bcfg, bobj, brates = jax.lax.cond(
@@ -171,21 +198,26 @@ def make_pricer(
             lambda: (new_cfg, new_obj, new_rates),
             lambda: (state.best_config, state.best_obj, state.best_per_sta),
         )
-        return _PSAState(new_cfg, new_obj, new_rates, bcfg, bobj, brates, key), None
+        return _PTabuState(new_cfg, new_obj, new_rates, bcfg, bobj, brates,
+                           new_hashes, new_ptr, key), None
 
     @jax.jit
     def _run(lam: jax.Array, init_config: NetworkConfig, key: jax.Array):
         key, eval_key = jax.random.split(key)
         init_rates = eval_per_sta(init_config, eval_key)
         init_obj   = jnp.sum(lam * init_rates)
-        init = _PSAState(
+        init = _PTabuState(
             config=init_config, cur_obj=init_obj, cur_per_sta=init_rates,
             best_config=init_config, best_obj=init_obj, best_per_sta=init_rates,
+            tabu_hashes=jnp.full((tabu_size,), jnp.int32(-1)),
+            tabu_ptr=jnp.int32(0),
             key=key,
         )
-        steps  = jnp.arange(inner_steps, dtype=jnp.int32)
-        lam_b  = jnp.broadcast_to(lam, (inner_steps, lam.shape[0]))
-        final, _ = jax.lax.scan(_step, init, (steps, lam_b))
+        # Keep total neighbour evaluations ≈ inner_steps (budget equivalence with SA):
+        # each Tabu step evaluates n_candidates neighbours, so run inner_steps // n_candidates steps.
+        n_iter = max(inner_steps // n_candidates, 1)
+        lam_b  = jnp.broadcast_to(lam, (n_iter, lam.shape[0]))
+        final, _ = jax.lax.scan(_step, init, lam_b)
         return final.best_config, final.best_per_sta, final.best_obj
 
     def pricer(lam_np: np.ndarray, init_config: NetworkConfig, key: jax.Array):
@@ -216,9 +248,8 @@ def _make_basis_pool(info: ScenarioInfo, key: jax.Array) -> list[NetworkConfig]:
         ap_idx, sta_slot = int(ap_idx), int(sta_slot)
         # selected: only (ap_idx, sta_slot) = 1
         selected = jnp.zeros((n_aps, max_stas), dtype=jnp.int32).at[ap_idx, sta_slot].set(1)
-        # tx_power: max (3); mcs: medium-high (9) as a safe-high default.
-        tx_power = jnp.full((n_aps, max_stas), 3, dtype=jnp.int32)
-        mcs      = jnp.full((n_aps, max_stas), 9, dtype=jnp.int32)
+        tx_power = jnp.full((n_aps, max_stas), 0,  dtype=jnp.int32)
+        mcs      = jnp.full((n_aps, max_stas), 13, dtype=jnp.int32)
         pool.append(NetworkConfig(selected, tx_power, mcs))
     return pool
 
@@ -256,11 +287,11 @@ def run(
     *,
     seed:           int   = 42,
     n_steps:        int   = 100,      # OUTER CG iterations
-    inner_steps:   int   = 1000,     # pricing SA steps per outer iteration
+    inner_steps:    int   = 1000,     # pricing Tabu steps per outer iteration
     patience:       int   = 10,
     max_pool:       int   = 64,
-    T_0:            float = 5.0,
-    T_decay:        float = 0.999,
+    tabu_size:      int   = 20,
+    n_candidates:   int   = 10,
     eps_bot:        float = 1e-3,     # Mb/s tolerance for bottleneck set
     lambda_mode:    str   = 'bottleneck',   # 'bottleneck' | 'inverse_gap'
     pricing_diversify_on_stall: bool = True,
@@ -269,11 +300,12 @@ def run(
     """Run primal-only column generation for max-min fairness.
 
     n_steps     : outer column-generation iterations (budget knob, like other methods).
-    inner_steps : pricing SA steps per outer iteration (hparam).
+    inner_steps : pricing Tabu steps per outer iteration (hparam).
     """
     info         = make_scenario_info(scenario)
     eval_per_sta = make_per_sta_evaluator(scenario, info)
-    pricer       = make_pricer(scenario, info, inner_steps=inner_steps, T_0=T_0, T_decay=T_decay)
+    pricer       = make_pricer(scenario, info, inner_steps=inner_steps,
+                               tabu_size=tabu_size, n_candidates=n_candidates)
     rng_np       = np.random.default_rng(seed)
 
     master_key = jax.random.PRNGKey(seed)

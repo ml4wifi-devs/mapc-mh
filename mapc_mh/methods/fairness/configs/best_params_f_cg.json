@@ -3,8 +3,8 @@
   "best_value": null,
   "best_params": {
     "inner_steps": 1000,
-    "T_0": 5.0,
-    "T_decay": 0.999,
+    "tabu_size": 79,
+    "n_candidates": 25,
     "patience": 10,
     "max_pool": 64,
     "lambda_mode": "bottleneck"

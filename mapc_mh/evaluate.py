@@ -119,6 +119,9 @@ def main():
     parser.add_argument('--seed',    type=int, default=42)
     parser.add_argument('--skip_t',  action='store_true', help='Skip T-Optimal methods')
     parser.add_argument('--skip_f',  action='store_true', help='Skip F-Optimal methods')
+    parser.add_argument('--methods', nargs='+', default=None,
+                        choices=list(T_METHODS) + list(F_METHODS),
+                        help='Restrict to these methods (default: all in selected families)')
     args = parser.parse_args()
 
     t_hparams = {
@@ -137,6 +140,10 @@ def main():
 
     active_t = dict(T_METHODS) if not args.skip_t else {}
     active_f = dict(F_METHODS) if not args.skip_f else {}
+    if args.methods is not None:
+        keep     = set(args.methods)
+        active_t = {m: fn for m, fn in active_t.items() if m in keep}
+        active_f = {m: fn for m, fn in active_f.items() if m in keep}
 
     print(f'T-Optimal methods: {", ".join(T_METHOD_LABELS[m] for m in active_t) or "(skipped)"}')
     print(f'F-Optimal methods: {", ".join(F_METHOD_LABELS[m] for m in active_f) or "(skipped)"}')

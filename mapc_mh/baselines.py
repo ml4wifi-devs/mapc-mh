@@ -126,10 +126,37 @@ def run_t_optimal(scenario, n_steps: int, seed: int) -> dict:
         access_points = access_points,
         channel_width = scenario.channel_width,
         opt_type      = OptimizationType.SUM,
-        solver        = plp.CPLEX_CMD(msg=False, threads=None)
+        solver        = plp.CPLEX_CMD(msg=False, threads=16)
     )
     _, total_rate = solver(path_loss, associations)
     return {'best_rate': float(total_rate)}
+
+
+# ── F-Optimal (MAX-MIN) ───────────────────────────────────────────────────────
+
+def run_f_optimal(scenario, n_steps: int, seed: int) -> dict:
+    associations  = _to_python_dict(scenario.associations)
+    access_points = list(associations.keys())
+    stations      = list(chain.from_iterable(associations.values()))
+    path_loss     = positions_to_path_loss(np.array(scenario.pos), np.array(scenario.walls))
+
+    solver        = Solver(
+        stations      = stations,
+        access_points = access_points,
+        channel_width = scenario.channel_width,
+        opt_type      = OptimizationType.MAX_MIN,
+        solver        = plp.CPLEX_CMD(msg=False, threads=16)
+    )
+    _, total_rate = solver(path_loss, associations)
+    n_stas        = len(stations)
+    # MAX_MIN equalises per-station rates at the optimum, so min = total / n_stas
+    # and Jain's index is 1.0.
+    min_rate      = float(total_rate) / n_stas if n_stas > 0 else 0.0
+    return {
+        'best_sum_rate': float(total_rate),
+        'best_min_rate': min_rate,
+        'best_fairness': 1.0,
+    }
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -138,12 +165,14 @@ AGENTS = {
     'h_mab':     run_h_mab,
     'dcf':       run_dcf,
     't_optimal': run_t_optimal,
+    'f_optimal': run_f_optimal,
 }
 
 AGENT_LABELS = {
     'h_mab':     'H-MAB',
     'dcf':       'DCF',
     't_optimal': 'T-Optimal',
+    'f_optimal': 'F-Optimal',
 }
 
 
@@ -158,6 +187,8 @@ def main():
                         help='Number of repetitions per scenario (different method seeds)')
     parser.add_argument('--t_optimal_max_aps', type=int, default=16,
                         help='For t_optimal: skip configs with more APs than this (default: 16 = up to 4×4)')
+    parser.add_argument('--f_optimal_max_aps', type=int, default=16,
+                        help='For f_optimal: skip configs with more APs than this (default: 16 = up to 4×4)')
     parser.add_argument('--only_first_2x2', action='store_true',
                         help='For h_mab and dcf: run only on the 2×2 config')
     args = parser.parse_args()
@@ -172,6 +203,8 @@ def main():
     print(f'Steps: {args.n_steps}  |  Base seed: {args.seed}')
     if 't_optimal' in args.agents:
         print(f't_optimal restricted to configs with ≤{args.t_optimal_max_aps} APs')
+    if 'f_optimal' in args.agents:
+        print(f'f_optimal restricted to configs with ≤{args.f_optimal_max_aps} APs')
 
     t0      = time.perf_counter()
     results = {}
@@ -187,6 +220,8 @@ def main():
             if args.only_first_2x2 and (x, y) != (2, 2):
                 skip = True
             if agent == 't_optimal' and x * y > args.t_optimal_max_aps:
+                skip = True
+            if agent == 'f_optimal' and x * y > args.f_optimal_max_aps:
                 skip = True
             
             if skip:

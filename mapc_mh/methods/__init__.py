@@ -39,6 +39,7 @@ BASELINE_LABELS: dict[str, str] = {
     'h_mab':     'H-MAB',
     'dcf':       'DCF',
     't_optimal': 'T-Optimal',
+    'f_optimal': 'F-Optimal',
 }
 
 ALL_LABELS: dict[str, str] = {**T_METHOD_LABELS, **F_METHOD_LABELS, **BASELINE_LABELS}
