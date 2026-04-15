@@ -27,12 +27,23 @@ def _group_rates(data: dict) -> dict[str, dict[str, list[float]]]:
     stride  = n_seeds * n_reps
     grouped: dict[str, dict[str, list[float]]] = {}
 
-    for method, runs in data['results'].items():
+    results: dict[str, list] = {}
+    for key in ('results', 'results_t', 'results_f'):
+        if key in data:
+            results.update(data[key])
+
+    for method, runs in results.items():
         grouped[method] = {}
         for cfg_idx, (x, y) in enumerate(SCENARIO_CONFIGS):
             name  = f'{x}x{y}'
             start = cfg_idx * stride
-            rates_raw = [runs[start + s]['best_rate'] for s in range(stride) if start + s < len(runs)]
+            rates_raw = []
+            for s in range(stride):
+                if start + s >= len(runs):
+                    continue
+                run = runs[start + s]
+                val = run.get('best_rate', run.get('best_min_rate'))
+                rates_raw.append(val)
             grouped[method][name] = [r for r in rates_raw if r is not None]
 
     return grouped
@@ -107,8 +118,9 @@ def main():
     for path in args.input:
         with open(path) as f:
             data = json.load(f)
-        all_grouped.update(_group_rates(data))
-        print(f'Loaded {path}: {list(data["results"].keys())} (n_seeds={data["n_seeds"]}, n_reps={data.get("n_reps", 1)})')
+        grouped = _group_rates(data)
+        all_grouped.update(grouped)
+        print(f'Loaded {path}: {list(grouped.keys())} (n_seeds={data["n_seeds"]}, n_reps={data.get("n_reps", 1)})')
 
     methods = list(all_grouped.keys())
     print(f'\nMethods: {", ".join(ALL_LABELS.get(m, m) for m in methods)}')

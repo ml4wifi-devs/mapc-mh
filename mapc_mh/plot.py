@@ -39,7 +39,9 @@ def _moving_average(x: np.ndarray, window: int) -> np.ndarray:
 
 
 def _compute_stats(histories: list[list[float]], window: int):
-    arr  = np.array(histories)
+    max_len = max(len(h) for h in histories)
+    padded  = [list(h) + [h[-1]] * (max_len - len(h)) for h in histories]
+    arr     = np.array(padded)
     sem  = arr.std(axis=0) / np.sqrt(len(arr))
     mean = _moving_average(arr.mean(axis=0), window)
     lo95 = _moving_average(arr.mean(axis=0) - 1.96 * sem, window)
@@ -55,7 +57,11 @@ def _load_results(input_paths: list[str]) -> dict[str, dict]:
             data = json.load(f)
         n_seeds = data['n_seeds']
         n_reps  = data.get('n_reps', 1)
-        for method, runs in data['results'].items():
+        results: dict = {}
+        for key in ('results', 'results_t', 'results_f'):
+            if key in data:
+                results.update(data[key])
+        for method, runs in results.items():
             merged[method] = {'runs': runs, 'n_seeds': n_seeds, 'n_reps': n_reps}
     return merged
 
@@ -90,10 +96,16 @@ def plot_results(merged: dict[str, dict], output_stem: str, window: int = 50):
             ls    = LINE_STYLES[i % len(LINE_STYLES)]
             label = ALL_LABELS.get(method, method)
             runs  = _group_by_config(merged[method]['runs'], merged[method]['n_seeds'], merged[method]['n_reps'])[name]
-            runs  = [r for r in runs if r.get('best_rate') is not None or 'best_history' in r]
+            def _rate(r):
+                return r.get('best_rate', r.get('best_min_rate'))
+            def _hist(r):
+                return r.get('best_history', r.get('min_history'))
+            runs = [r for r in runs if _rate(r) is not None or _hist(r) is not None]
+            if not runs:
+                continue
 
-            if 'best_history' in runs[0]:
-                histories        = [r['best_history'] for r in runs]
+            if _hist(runs[0]) is not None:
+                histories        = [_hist(r) for r in runs]
                 steps, mean, lo95, hi95 = _compute_stats(histories, window)
                 n_steps = len(steps)
 
@@ -103,7 +115,7 @@ def plot_results(merged: dict[str, dict], output_stem: str, window: int = 50):
                 for s, m, l, h in zip(steps.tolist(), mean.tolist(), lo95.tolist(), hi95.tolist()):
                     csv_rows.append({'config': name, 'method': label, 'step': s, 'mean': m, 'lo95': l, 'hi95': h})
             else:
-                rates = [r['best_rate'] for r in runs if r.get('best_rate') is not None]
+                rates = [_rate(r) for r in runs if _rate(r) is not None]
                 if not rates:
                     continue
                 mean  = float(np.mean(rates))

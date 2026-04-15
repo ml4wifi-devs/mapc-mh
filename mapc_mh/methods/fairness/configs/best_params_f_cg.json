@@ -1,12 +1,16 @@
 {
   "method": "f_cg",
-  "best_value": null,
+  "best_value": 39.71843795884502,
   "best_params": {
-    "inner_steps": 1000,
-    "tabu_size": 79,
-    "n_candidates": 25,
-    "patience": 10,
-    "max_pool": 64,
+    "inner_steps": 3106,
+    "tabu_size": 85,
+    "n_candidates": 8,
+    "patience": 26,
+    "max_pool": 72,
     "lambda_mode": "bottleneck"
-  }
+  },
+  "n_trials": 100,
+  "n_steps": 100,
+  "n_seeds": 1,
+  "seed": 42
 }
