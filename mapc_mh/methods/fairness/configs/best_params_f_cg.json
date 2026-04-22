@@ -2,15 +2,15 @@
   "method": "f_cg",
   "best_value": 39.71843795884502,
   "best_params": {
-    "inner_steps": 3106,
+    "inner_steps": 1000,
     "tabu_size": 85,
     "n_candidates": 8,
     "patience": 26,
     "max_pool": 72,
-    "lambda_mode": "bottleneck"
+    "lambda_mode": "dual"
   },
   "n_trials": 100,
-  "n_steps": 100,
+  "n_steps": 300,
   "n_seeds": 1,
   "seed": 42
 }

@@ -17,7 +17,7 @@ source .venv/bin/activate
 # ── Parameters ────────────────────────────────────────────────────────────────
 N_SCENARIO_SEEDS=5  # topology seeds (scenario realizations) per config
 N_REPS_METHODS=30   # method repetitions per scenario: F-CG
-N_STEPS=100         # outer CG iterations (budget knob)
+N_STEPS=300         # outer CG iterations (budget knob)
 SEED=42
 F_OPTIMAL_MAX_APS=9 # restrict to ≤ 3×3 = 9 stations
 SKIP_TUNE=0

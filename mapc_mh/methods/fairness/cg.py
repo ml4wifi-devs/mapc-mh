@@ -45,7 +45,7 @@ from mapc_mh.methods.fairness.core import FResult, jains_index
 def solve_max_min_lp(
     R: np.ndarray,
     eps_feas: float = 1e-9,
-) -> tuple[np.ndarray, float, np.ndarray]:
+) -> tuple[np.ndarray, float, np.ndarray, dict]:
     """Solve  max t s.t.  R^T w >= t 1,  1^T w = 1,  w >= 0.
 
     Parameters
@@ -57,10 +57,15 @@ def solve_max_min_lp(
     w       : (n_pool,) — optimal mixing weights.
     t       : float      — LP optimum (min achieved rate).
     per_sta : (n_stas,)  — w^T R  (achieved rate vector).
+    duals   : dict with keys
+        'beta'  : (n_stas,) — per-station duals (lambda_s >= 0 in the max problem).
+                  Reduced cost of new column r_new: -alpha + beta @ r_new.
+        'alpha' : float    — dual of the sum(w) = 1 constraint.
     """
     n_pool, n_stas = R.shape
+    _zero_duals = {'beta': np.zeros(n_stas), 'alpha': 0.0}
     if n_pool == 0:
-        return np.zeros(0), 0.0, np.zeros(n_stas)
+        return np.zeros(0), 0.0, np.zeros(n_stas), _zero_duals
 
     # vars: [w_0 ... w_{n-1}, t].  minimise  -t.
     c = np.zeros(n_pool + 1); c[-1] = -1.0
@@ -81,7 +86,7 @@ def solve_max_min_lp(
     if not res.success:
         w = np.full(n_pool, 1.0 / n_pool)
         per_sta = w @ R
-        return w, float(per_sta.min()), per_sta
+        return w, float(per_sta.min()), per_sta, _zero_duals
 
     w = np.maximum(res.x[:n_pool], 0.0)
     s = w.sum()
@@ -89,7 +94,12 @@ def solve_max_min_lp(
         w = w / s
     t_opt   = float(-res.fun)
     per_sta = w @ R
-    return w, max(t_opt, 0.0), per_sta
+
+    beta  = -res.ineqlin.marginals
+    alpha = res.eqlin.marginals[0]
+    duals = {'beta': beta, 'alpha': alpha}
+
+    return w, max(t_opt, 0.0), per_sta, duals
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +303,7 @@ def run(
     tabu_size:      int   = 20,
     n_candidates:   int   = 10,
     eps_bot:        float = 1e-3,     # Mb/s tolerance for bottleneck set
-    lambda_mode:    str   = 'bottleneck',   # 'bottleneck' | 'inverse_gap'
+    lambda_mode:    str   = 'dual',         # 'dual' | 'bottleneck' | 'inverse_gap'
     pricing_diversify_on_stall: bool = True,
     top_n:          int   = 10,        # ignored, accepted for interface parity
 ) -> FResult:
@@ -324,7 +334,7 @@ def run(
     best_sum_history: list[float] = []
     score_history:    list[float] = []
 
-    w, t, per_sta = solve_max_min_lp(R)
+    w, t, per_sta, duals = solve_max_min_lp(R)
     best_t        = t
     best_w        = w.copy()
     best_per_sta  = per_sta.copy()
@@ -334,17 +344,19 @@ def run(
     stall_kick    = 0
 
     for it in range(n_steps):
-        # --- choose lambda (no duals) ---
-        if lambda_mode == 'inverse_gap':
+        # --- lambda from LP duals (true CG direction); fallback to heuristic if degenerate ---
+        beta = duals['beta']
+        if lambda_mode == 'dual' and beta.sum() > 1e-12:
+            lam = (beta / beta.sum()).astype(np.float32)
+        elif lambda_mode == 'inverse_gap':
             lam = _lambda_inverse_gap(per_sta, t, eps_gap=1.0)
         else:
             lam = _lambda_bottleneck_uniform(per_sta, t, eps_bot)
 
-        # Diversification on consecutive stalls: randomly reweight lambda within B.
+        # Diversification on consecutive stalls: randomly reweight lambda.
         if pricing_diversify_on_stall and stall_kick > 0:
             noise = rng_np.random(lam.shape).astype(np.float32) * (0.5 * stall_kick)
             lam   = lam * (1.0 + noise)
-            # Keep lam on the same support sign pattern; renormalise.
             if lam.sum() > 0: lam = lam / lam.sum()
 
         # --- pricing: warm start from a random pool member ---
@@ -355,13 +367,13 @@ def run(
 
         # --- primal admission test: does the RMP improve? ---
         R_trial = np.vstack([R, r_new_np[None, :]])
-        w_t, t_t, per_sta_t = solve_max_min_lp(R_trial)
+        w_t, t_t, per_sta_t, duals_t = solve_max_min_lp(R_trial)
 
         improved = t_t > best_t + 1e-6
         if improved:
             pool_cfgs.append(c_new)
             R       = R_trial
-            w, t, per_sta = w_t, t_t, per_sta_t
+            w, t, per_sta, duals = w_t, t_t, per_sta_t, duals_t
             best_t, best_w, best_per_sta = t, w.copy(), per_sta.copy()
             best_R, best_pool = R.copy(), list(pool_cfgs)
             stalls, stall_kick = 0, 0
@@ -382,7 +394,7 @@ def run(
             if keep.sum() >= R.shape[1]:
                 pool_cfgs = [pool_cfgs[i] for i in range(len(pool_cfgs)) if keep[i]]
                 R = R[keep]
-                w, t, per_sta = solve_max_min_lp(R)
+                w, t, per_sta, duals = solve_max_min_lp(R)
                 best_t, best_w, best_per_sta = t, w.copy(), per_sta.copy()
                 best_R, best_pool = R.copy(), list(pool_cfgs)
 
