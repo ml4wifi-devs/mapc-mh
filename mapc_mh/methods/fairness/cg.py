@@ -369,7 +369,10 @@ def run(
         R_trial = np.vstack([R, r_new_np[None, :]])
         w_t, t_t, per_sta_t, duals_t = solve_max_min_lp(R_trial)
 
-        improved = t_t > best_t + 1e-6
+        worst_improves = t_t > best_t + 1e-6
+        worst_ties     = abs(t_t - best_t) <= 1e-6
+        sum_improves   = per_sta_t.sum() > best_per_sta.sum() + 1e-6
+        improved = worst_improves or (worst_ties and sum_improves)
         if improved:
             pool_cfgs.append(c_new)
             R       = R_trial
